@@ -1,0 +1,24 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.10'
+      - name: Shell syntax
+        run: |
+          /bin/zsh -n sync.zsh install.zsh uninstall.zsh update.zsh launchagent.zsh config.zsh config.local.example.zsh strongbox-source.zsh
+          /bin/bash -n setup-google-drive.sh
+      - name: Isolated sync and API tests
+        run: python3 -m unittest discover -s tests -v

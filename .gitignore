@@ -1,0 +1,10 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+*.kdbx
+*.kdb
+*.key
+*.keyx
+__pycache__/
+config.local.zsh
