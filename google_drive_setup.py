@@ -15,7 +15,7 @@ import time
 from urllib.parse import parse_qs, urlencode, urlsplit
 import webbrowser
 
-from google_drive import (Credentials, DriveError, GoogleDrive, SCOPE, TOKEN_URL,
+from google_drive import (MY_DRIVE, Credentials, DriveError, GoogleDrive, SCOPE, TOKEN_URL,
                          load_credentials, object_value, request_json,
                          save_credentials, string_value, validate_id)
 
@@ -23,7 +23,7 @@ AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 
 
 def parse_folder(value: str) -> str:
-    """Returns the folder ID, or the alias "root" for My Drive itself."""
+    """Returns the folder ID, or the MY_DRIVE alias for My Drive itself."""
     if re.fullmatch(r"[A-Za-z0-9_-]{1,256}", value):
         return validate_id(value)
     try:
@@ -33,9 +33,8 @@ def parse_folder(value: str) -> str:
         parsed = urlsplit("")
     if parsed.scheme != "https" or parsed.netloc != "drive.google.com":
         raise DriveError("Invalid Drive folder URL or folder ID.")
-    # My Drive has no /folders/ address of its own.
     if re.fullmatch(r"/drive/(?:u/[0-9]+/)?my-drive/?", parsed.path):
-        return "root"
+        return MY_DRIVE
     match = re.fullmatch(r"/drive/(?:u/[0-9]+/)?folders/([A-Za-z0-9_-]{1,256})/?", parsed.path)
     if not match:
         raise DriveError("Invalid Drive folder URL or folder ID.")
@@ -190,7 +189,7 @@ def main(argv=None):
         drive = GoogleDrive(credentials)
         email = drive.account_email()
         folder = drive.get_folder(folder_id)
-        # Drive lists files under the real ID, also for the alias "root".
+        # Drive lists files under the real ID, also for MY_DRIVE.
         folder_id = string_value(folder.get("id"))
         file = drive.find_file(folder_id, args.name)
         print(f"Google account: {display_text(email)}")
@@ -216,7 +215,7 @@ def main(argv=None):
             reason = "Setup cancelled." if isinstance(error, KeyboardInterrupt) else str(error)
             try:
                 save_credentials(previous)
-            except DriveError:
+            except (DriveError, KeyboardInterrupt):
                 raise DriveError(f"{reason} The previous Google access could not be restored "
                                  "either. Run the setup again.") from None
             raise DriveError(f"{reason} The previous Google access was kept.") from None

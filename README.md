@@ -293,7 +293,8 @@ counts as a pending upload.
 earlier confirmation does not confirm the current check. The warning time
 counts only the time between successful checks that found a difference, at
 most 15 minutes per interval. API errors and other failed checks pause the
-count; new local content or a new target folder resets it. An overdue upload or a new check error notifies
+count; new local content, a new target folder, or a missing Python resets it.
+Without Python the check cannot read the local content. An overdue upload or a new check error notifies
 if `NOTIFY=1`. Repeats of the same message stay silent. The check writes status
 changes to `sync.log`. If the log entry or the notification fails, the next run
 with the same result tries it again. This also applies to the error for a

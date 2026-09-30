@@ -179,6 +179,11 @@ class LifecycleTest(StrongboxFixture):
         self.run_script("sync.zsh")
         self.assertEqual(self.destination.read_bytes(), b"encrypted backup")
 
+    def test_config_using_an_unset_variable_loads_completely(self):
+        self.write_config('EXTRA="$UNDEFINED_BY_THE_USER"\nNOTIFY=0\n')
+        job = plistlib.loads(self.run_script("install.zsh", "--print-plist").stdout.encode())
+        self.assertEqual(job["EnvironmentVariables"]["STRONGBOX_NOTIFY"], "0")
+
     def test_job_reports_configuration_errors(self):
         for extra, message in (("NOTIFY='unterminated\n", "config.local.zsh"),
                                ("NOTIFY=2\n", "NOTIFY must be 0 or 1.")):

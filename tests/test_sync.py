@@ -160,6 +160,13 @@ class SyncTest(StrongboxFixture):
         self.assertIn("lock", (self.state / "sync.log").read_text())
         self.assertTrue((self.state / "last-error").is_file())
 
+    def test_unopenable_lock_is_reported_not_skipped(self):
+        self.state.mkdir()
+        lock = self.state / "sync.lock"
+        lock.touch(mode=0o200)
+        (self.source / "test.bak").write_bytes(b"backup")
+        self.assertIn("lock", self.run_sync(1).stderr)
+
     def test_log_failure_stops_copy_and_is_reported(self):
         self.state.mkdir()
         (self.state / "sync.log").mkdir()
@@ -281,6 +288,18 @@ class SyncTest(StrongboxFixture):
         self.assertEqual(calls.read_text().count("No Strongbox backup found."), 2)
         self.assertEqual((self.state / "sync.log").read_text().count("No Strongbox backup found."), 1)
 
+    def test_turning_notifications_off_drops_a_pending_one(self):
+        calls, failing = self.fake_osascript()
+        self.run_sync(1)
+        failing.unlink()
+        self.env["STRONGBOX_NOTIFY"] = "0"
+        self.run_sync(1)
+        self.env["STRONGBOX_NOTIFY"] = "1"
+        self.run_sync(1)
+        # Only the failed first attempt: like the upload check, a pending
+        # notification does not outlive NOTIFY=0.
+        self.assertEqual(calls.read_text().count("No Strongbox backup found."), 1)
+
     def test_failed_python_notification_is_retried_once_delivered(self):
         calls, failing = self.fake_osascript()
         self.env["STRONGBOX_PYTHON"] = str(self.base / "missing-python")
@@ -352,6 +371,8 @@ class SyncTest(StrongboxFixture):
                 self.assertEqual(result.returncode, 1)
                 # Without config.local.zsh the message says how to start.
                 self.assertIn("Copy config.local.example.zsh to config.local.zsh", result.stderr)
+                # A fresh checkout is not a broken job: nothing is written.
+                self.assertFalse(self.state.exists())
                 result = subprocess.run(["/bin/zsh", str(project / "install.zsh"), "--print-plist"],
                                         env=env, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 1)

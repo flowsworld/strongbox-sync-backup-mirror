@@ -145,6 +145,15 @@ class ApiTest(unittest.TestCase):
             with self.subTest(config=config), self.assertRaises(CheckError):
                 google_drive.provider_from_config(config)
 
+    def test_provider_resolves_the_my_drive_alias(self):
+        root = {"id": "0AMyDriveRoot", "name": "My Drive", "trashed": False,
+                "mimeType": "application/vnd.google-apps.folder"}
+        with patch("google_drive.load_credentials", return_value=CREDENTIALS), \
+                patch("google_drive.request_json", side_effect=[
+                    {"access_token": "fixture-access"}, root, {"files": [{**FILE, "parents": ["0AMyDriveRoot"]}]}]):
+            remote = google_drive.provider_from_config({"folder_id": "root"}).find("Passwords.kdbx")
+        self.assertEqual(remote.id, "file123")
+
     def test_keychain_credentials_use_stdin_and_verify_readback(self):
         encoded = base64.b64encode(json.dumps(asdict(CREDENTIALS)).encode()).decode()
         results = [subprocess.CompletedProcess([], 0, "", ""),
@@ -188,8 +197,8 @@ class SetupTest(unittest.TestCase):
     def sign_in(self, token_response):
         """Runs authorize() against a fake browser and callback server.
 
-        Returns the recorded browser URLs, callback replies, token request mock,
-        and stdout. authorize() errors propagate to the caller.
+        Returns the credentials, recorded browser URLs, callback replies, token
+        request mock, and stdout. authorize() errors propagate to the caller.
         """
         opened = []
         replies = []
@@ -226,12 +235,13 @@ class SetupTest(unittest.TestCase):
         with patch("google_drive_setup.HTTPServer", FakeServer), patch("google_drive_setup.webbrowser.open", side_effect=browser), \
                 patch("google_drive_setup.request_json", return_value=token_response) as request, \
                 patch("sys.stdout", new_callable=io.StringIO) as output:
-            self.credentials = google_drive_setup.authorize(CREDENTIALS.client_id, CREDENTIALS.client_secret)
-        return opened, replies, request, output
+            credentials = google_drive_setup.authorize(CREDENTIALS.client_id, CREDENTIALS.client_secret)
+        return credentials, opened, replies, request, output
 
     def test_oauth_pkce_state_and_no_callback_reflection(self):
-        opened, replies, request, output = self.sign_in({"refresh_token": "fixture-refresh", "scope": google_drive.SCOPE})
-        self.assertEqual(self.credentials, CREDENTIALS)
+        credentials, opened, replies, request, output = self.sign_in(
+            {"refresh_token": "fixture-refresh", "scope": google_drive.SCOPE})
+        self.assertEqual(credentials, CREDENTIALS)
         parameters = parse_qs(urlsplit(opened[0]).query)
         token_data = request.call_args.kwargs["data"]
         expected_challenge = base64.urlsafe_b64encode(google_drive_setup.hashlib.sha256(token_data["code_verifier"].encode()).digest()).rstrip(b"=").decode()
@@ -307,6 +317,18 @@ class SetupTest(unittest.TestCase):
             keychain.append(credentials)
         failure = google_drive.DriveError("Could not save the upload check configuration.")
         result, errors = self.run_confirmed_setup(keychain, failure, save)
+        self.assertEqual(result, 1)
+        self.assertIn("could not be restored", errors)
+
+    def test_second_cancel_during_restore_is_reported(self):
+        previous = google_drive.Credentials(CREDENTIALS.client_id, CREDENTIALS.client_secret, "previous-refresh")
+        keychain = [previous]
+
+        def save(credentials):
+            if credentials == previous:
+                raise KeyboardInterrupt
+            keychain.append(credentials)
+        result, errors = self.run_confirmed_setup(keychain, KeyboardInterrupt, save)
         self.assertEqual(result, 1)
         self.assertIn("could not be restored", errors)
 

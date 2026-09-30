@@ -50,7 +50,10 @@ fail() {
         notify_now=1
     fi
     [[ ! -f "$NOTIFY_PENDING_FILE" ]] || notify_now=1
-    if [[ "$NOTIFY" == 1 ]] && (( notify_now )); then
+    if [[ "$NOTIFY" != 1 ]]; then
+        # Like the upload check: a pending notification does not outlive NOTIFY=0.
+        rm -f -- "$NOTIFY_PENDING_FILE"
+    elif (( notify_now )); then
         if notify 'Strongbox backup failed' "$message"; then
             rm -f -- "$NOTIFY_PENDING_FILE"
         else
@@ -71,7 +74,8 @@ recovered() {
 # cloud-status.json with an error result; the flags are JSON booleans.
 write_cloud_error() {
     TEMP_FILE=$(mktemp "$STATE_DIR/.cloud-status.XXXXXXXX") || return 1
-    # Without a checksum, an earlier confirmation cannot be tied to any content.
+    # Without a checksum, an earlier confirmation and the waiting time cannot be
+    # tied to any content, so both start again once Python works.
     cat > "$TEMP_FILE" <<JSON || return 1
 {
   "status": "error",
@@ -136,12 +140,13 @@ check_upload() {
         --warning-seconds "$CLOUD_WARNING_SECONDS" --notify "$NOTIFY"
 }
 
-# The job reads config.local.zsh on every run, so a later edit can break it.
-# Such an error is logged and notified like any other, unless STATE_DIR itself
-# is the problem: an invalid STATE_DIR receives no files.
+# The job reads config.local.zsh on every run. Its values come from the plist,
+# but an edit with a syntax error still breaks it, so such an error is logged
+# and notified like any other. Without config.local.zsh (a fresh checkout) or
+# with an invalid STATE_DIR, nothing is written.
 config_error=$(config_problem)
 if [[ -n "$config_error" ]]; then
-    [[ -z "$(state_dir_problem)" ]] && mkdir -p "$STATE_DIR" 2>/dev/null ||
+    [[ -f "$LOCAL_CONFIG" && -z "$(state_dir_problem)" ]] && mkdir -p "$STATE_DIR" 2>/dev/null ||
         { print -ru2 -- "$config_error"; exit 1; }
     fail "$config_error"
 fi
@@ -150,7 +155,9 @@ mkdir -p "$STATE_DIR" || fail 'Could not create the state directory.'
 # kill -9, so a stale lock file never blocks a run. The file itself stays: a
 # removed and recreated file would let two runs lock different files. Only a
 # lock held by a running job is a normal reason to skip this run without an error.
-[[ ! -L "$LOCK_FILE" ]] && : >> "$LOCK_FILE" 2>/dev/null || fail 'Could not create the sync lock.'
+# flock fails the same way for a held lock and for a file it cannot open, so
+# the read-write open here separates the two.
+[[ ! -L "$LOCK_FILE" ]] && : <> "$LOCK_FILE" 2>/dev/null || fail 'Could not create the sync lock.'
 zmodload zsh/system || fail 'Could not create the sync lock.'
 zsystem flock -t 0 -f LOCK_FD "$LOCK_FILE" 2>/dev/null || exit 0
 # Make sure a copy can be logged before making it.

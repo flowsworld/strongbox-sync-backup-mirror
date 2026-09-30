@@ -23,9 +23,11 @@ LOCAL_CONFIG="${${(%):-%x}:A:h}/config.local.zsh"
 LOCAL_CONFIG_BROKEN=0
 # The status of source is that of the file's last command, which says nothing
 # about the file. A syntax check does; config_problem reports a broken file.
+# The file runs like a plain zsh script: the callers' set -eu must not stop it
+# halfway, for example at an unset variable, and drop the later settings.
 if [[ -f "$LOCAL_CONFIG" ]]; then
-    if /bin/zsh -fn "$LOCAL_CONFIG"; then
-        source "$LOCAL_CONFIG" || :
+    if [[ -r "$LOCAL_CONFIG" ]] && /bin/zsh -fn "$LOCAL_CONFIG"; then
+        () { setopt localoptions unset no_err_exit; source "$LOCAL_CONFIG" } || :
     else
         LOCAL_CONFIG_BROKEN=1
     fi
@@ -66,7 +68,7 @@ config_problem() {
     local state_problem
     state_problem=$(state_dir_problem)
     if (( LOCAL_CONFIG_BROKEN )); then
-        print -r -- 'config.local.zsh has a syntax error. Fix it, then run the command again.'
+        print -r -- 'config.local.zsh cannot be read or has a syntax error. Fix it, then run the command again.'
     elif [[ ! -f "$LOCAL_CONFIG" && ( -z "$DATABASE_NAME" || -z "$TARGET_DIR" ) ]]; then
         print -r -- 'Copy config.local.example.zsh to config.local.zsh and set DATABASE_NAME and TARGET_DIR.'
     elif [[ -z "$DATABASE_NAME" || "$DATABASE_NAME" == */* ]]; then
