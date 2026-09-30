@@ -95,9 +95,11 @@ def checksums(target: Path) -> tuple[dict[str, str], os.stat_result]:
 
 
 def ensure_unchanged(target: Path, before: os.stat_result) -> None:
+    # Not the ctime: sync clients set attributes on a fresh copy without
+    # changing its content. New content changes the mtime, a new file the inode.
     after = target.stat()
-    if (before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
-        after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns
+    if (before.st_ino, before.st_size, before.st_mtime_ns) != (
+        after.st_ino, after.st_size, after.st_mtime_ns
     ):
         raise CheckError("The local copy changed during the cloud check.")
 

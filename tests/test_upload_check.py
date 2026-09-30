@@ -155,6 +155,15 @@ class CloudCheckTest(unittest.TestCase):
         self.assertEqual(state["status"], "error")
         self.assertIn("changed", state["message"])
 
+    def test_metadata_change_during_request_still_confirms_upload(self):
+        # Sync clients such as Google Drive for desktop set attributes on the
+        # fresh copy, which changes its ctime but not its content.
+        def touched_metadata(*args):
+            self.target.chmod(0o640)
+            return self.metadata()
+        self.find.side_effect = touched_metadata
+        self.assertEqual(self.run_check()["status"], "confirmed")
+
     def test_notifications_deduplicated_without_exposing_response(self):
         self.find.side_effect = CheckError("Sign-in expired.")
         with patch.object(upload_check.subprocess, "run", return_value=Mock(returncode=0)) as notify:
