@@ -23,11 +23,18 @@ LOCAL_CONFIG="${${(%):-%x}:A:h}/config.local.zsh"
 LOCAL_CONFIG_BROKEN=0
 # The status of source is that of the file's last command, which says nothing
 # about the file. A syntax check does; config_problem reports a broken file.
-# The file runs like a plain zsh script: the callers' set -eu must not stop it
-# halfway, for example at an unset variable, and drop the later settings.
+# The file runs like a plain zsh script at top level, so declarations stay
+# global: the callers' set -eu must not stop it halfway, for example at an
+# unset variable, and drop the later settings.
 if [[ -f "$LOCAL_CONFIG" ]]; then
     if [[ -r "$LOCAL_CONFIG" ]] && /bin/zsh -fn "$LOCAL_CONFIG"; then
-        () { setopt localoptions unset no_err_exit; source "$LOCAL_CONFIG" } || :
+        CALLER_OPTIONS=()
+        [[ ! -o errexit ]] || CALLER_OPTIONS+=(errexit)
+        [[ ! -o nounset ]] || CALLER_OPTIONS+=(nounset)
+        unsetopt errexit nounset
+        source "$LOCAL_CONFIG" || :
+        (( ! ${#CALLER_OPTIONS} )) || setopt $CALLER_OPTIONS
+        unset CALLER_OPTIONS
     else
         LOCAL_CONFIG_BROKEN=1
     fi

@@ -344,11 +344,17 @@ class SyncTest(StrongboxFixture):
         self.assertIn("PYTHON must be an absolute path", result.stderr)
 
     def test_invalid_configuration_writes_nothing(self):
-        # A state folder inside the mirror must not receive log or lock files.
+        # A state folder inside the mirror must not receive log or lock files,
+        # also for an installed job, which has a config.local.zsh.
+        project = self.base / "project"
+        project.mkdir()
+        for script in ("sync.zsh", "config.zsh", "strongbox-source.zsh"):
+            (project / script).write_bytes((ROOT / script).read_bytes())
+        (project / "config.local.zsh").write_text("# Values come from the environment.\n")
         state = self.target / "state"
         self.env["STRONGBOX_STATE_DIR"] = str(state)
         (self.source / "test.bak").write_bytes(b"backup")
-        result = subprocess.run(["/bin/zsh", str(ROOT / "sync.zsh")],
+        result = subprocess.run(["/bin/zsh", str(project / "sync.zsh")],
                                 env=self.env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 1)
         self.assertIn("must not contain each other", result.stderr)

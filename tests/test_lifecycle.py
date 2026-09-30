@@ -184,6 +184,12 @@ class LifecycleTest(StrongboxFixture):
         job = plistlib.loads(self.run_script("install.zsh", "--print-plist").stdout.encode())
         self.assertEqual(job["EnvironmentVariables"]["STRONGBOX_NOTIFY"], "0")
 
+    def test_config_declarations_keep_their_values(self):
+        self.write_config("declare NOTIFY=0\ninteger CLOUD_WARNING_SECONDS=3600\n")
+        job = plistlib.loads(self.run_script("install.zsh", "--print-plist").stdout.encode())
+        self.assertEqual(job["EnvironmentVariables"]["STRONGBOX_NOTIFY"], "0")
+        self.assertEqual(job["EnvironmentVariables"]["STRONGBOX_CLOUD_WARNING_SECONDS"], "3600")
+
     def test_job_reports_configuration_errors(self):
         for extra, message in (("NOTIFY='unterminated\n", "config.local.zsh"),
                                ("NOTIFY=2\n", "NOTIFY must be 0 or 1.")):
