@@ -78,29 +78,39 @@ def previous_state(path: Path) -> dict:
     return value
 
 
-def checksums(target: Path) -> tuple[dict[str, str], os.stat_result]:
-    """Hashes the file with every supported algorithm in one read pass.
-
-    This runs before the provider query, so an API error can still keep the
-    pending timer of unchanged content, which requires local_sha256.
-    """
-    before = target.stat()
+def read_hashes(target: Path) -> dict[str, str]:
+    """Hashes the file with every supported algorithm in one read pass."""
     hashes = {algorithm: new() for algorithm, new in LOCAL_HASHES.items()}
     with target.open("rb") as file:
         for chunk in iter(lambda: file.read(1024 * 1024), b""):
             for digest in hashes.values():
                 digest.update(chunk)
-    ensure_unchanged(target, before)
-    return {algorithm: digest.hexdigest() for algorithm, digest in hashes.items()}, before
+    return {algorithm: digest.hexdigest() for algorithm, digest in hashes.items()}
 
 
-def ensure_unchanged(target: Path, before: os.stat_result) -> None:
-    # Not the ctime: sync clients set attributes on a fresh copy without
-    # changing its content. New content changes the mtime, a new file the inode.
+def checksums(target: Path) -> tuple[dict[str, str], os.stat_result]:
+    """Hashes the file and returns the hashes with the stat they belong to.
+
+    This runs before the provider query, so an API error can still keep the
+    pending timer of unchanged content, which requires local_sha256.
+    """
+    before = target.stat()
+    hashes = read_hashes(target)
+    ensure_unchanged(target, before, hashes["sha256"])
+    return hashes, before
+
+
+def ensure_unchanged(target: Path, before: os.stat_result, sha256: str) -> None:
+    """Fails if the file no longer holds the content hashed as sha256.
+
+    Sync clients set attributes on a fresh copy, which changes only the ctime.
+    Such a change is checked by hashing again, because a rewrite with the same
+    size and a restored mtime changes nothing else either.
+    """
     after = target.stat()
-    if (before.st_ino, before.st_size, before.st_mtime_ns) != (
-        after.st_ino, after.st_size, after.st_mtime_ns
-    ):
+    if ((before.st_ino, before.st_size, before.st_mtime_ns) != (
+            after.st_ino, after.st_size, after.st_mtime_ns) or
+            (before.st_ctime_ns != after.st_ctime_ns and read_hashes(target)["sha256"] != sha256)):
         raise CheckError("The local copy changed during the cloud check.")
 
 
@@ -211,7 +221,7 @@ def check(target: Path, state_dir: Path, name: str, warning_seconds: int, notify
         local, before = checksums(target)
         sha256 = local["sha256"]
         remote = provider.find(name)
-        ensure_unchanged(target, before)
+        ensure_unchanged(target, before, sha256)
         state = next_state(previous, context, local, now, remote, before.st_size, warning_seconds)
     except (CheckError, OSError) as error:
         # An error before the target or the content is known changes neither;

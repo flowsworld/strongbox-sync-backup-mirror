@@ -3,6 +3,7 @@ from contextlib import redirect_stdout
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -163,6 +164,17 @@ class CloudCheckTest(unittest.TestCase):
             return self.metadata()
         self.find.side_effect = touched_metadata
         self.assertEqual(self.run_check()["status"], "confirmed")
+
+    def test_same_size_rewrite_with_restored_mtime_cannot_confirm_upload(self):
+        def rewritten(*args):
+            before = self.target.stat()
+            self.target.write_bytes(b"ENCRYPTED FIXTURE")
+            os.utime(self.target, ns=(before.st_atime_ns, before.st_mtime_ns))
+            return self.metadata()
+        self.find.side_effect = rewritten
+        state = self.run_check(expected=1)
+        self.assertEqual(state["status"], "error")
+        self.assertIn("changed", state["message"])
 
     def test_notifications_deduplicated_without_exposing_response(self):
         self.find.side_effect = CheckError("Sign-in expired.")
