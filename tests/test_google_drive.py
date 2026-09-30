@@ -4,7 +4,9 @@ import email.message
 from dataclasses import asdict
 import io
 import json
+import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
@@ -320,18 +322,6 @@ class SetupTest(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIn("could not be restored", errors)
 
-    def test_second_cancel_during_restore_is_reported(self):
-        previous = google_drive.Credentials(CREDENTIALS.client_id, CREDENTIALS.client_secret, "previous-refresh")
-        keychain = [previous]
-
-        def save(credentials):
-            if credentials == previous:
-                raise KeyboardInterrupt
-            keychain.append(credentials)
-        result, errors = self.run_confirmed_setup(keychain, KeyboardInterrupt, save)
-        self.assertEqual(result, 1)
-        self.assertIn("could not be restored", errors)
-
     def test_my_drive_root_is_saved_with_its_real_id(self):
         for folder in ("https://drive.google.com/drive/my-drive", "https://drive.google.com/drive/u/1/my-drive", "root"):
             with self.subTest(folder=folder), tempfile.TemporaryDirectory() as directory:
@@ -366,14 +356,20 @@ class SetupTest(unittest.TestCase):
         self.assertEqual(keychain[-1], previous)
         self.assertIn("previous Google access was kept", errors)
 
-    def test_cancel_while_saving_restores_previous_credentials(self):
+    def test_ctrl_c_while_saving_cannot_split_account_and_folder(self):
         previous = google_drive.Credentials(CREDENTIALS.client_id, CREDENTIALS.client_secret, "previous-refresh")
         keychain = [previous]
-        result, errors = self.run_confirmed_setup(keychain, KeyboardInterrupt)
-        self.assertEqual(result, 1)
-        self.assertEqual(keychain[-1], previous)
-        self.assertIn("cancelled", errors)
-        self.assertIn("previous Google access was kept", errors)
+        saved = []
+
+        def save_config(state_dir, folder_id):
+            # Ctrl-C right after upload-check.json was replaced.
+            saved.append(folder_id)
+            os.kill(os.getpid(), signal.SIGINT)
+        result, errors = self.run_confirmed_setup(keychain, save_config)
+        self.assertEqual(result, 0, errors)
+        self.assertEqual((keychain[-1], saved), (CREDENTIALS, ["folder456"]))
+        # Ctrl-C works again afterwards.
+        self.assertIs(signal.getsignal(signal.SIGINT), signal.default_int_handler)
 
     def test_atomic_public_config_has_restricted_permissions(self):
         with tempfile.TemporaryDirectory() as directory:

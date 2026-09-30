@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import signal
 import sys
 import tempfile
 import time
@@ -167,6 +168,27 @@ def save_config(state_dir: Path, folder_id: str) -> None:
             temporary.unlink(missing_ok=True)
 
 
+def save_pair(credentials: Credentials, previous: Credentials | None,
+              state_dir: Path, folder_id: str) -> None:
+    """Saves the credentials and the folder, or restores the previous credentials.
+
+    The old folder configuration must keep its matching credentials, also when
+    the keychain write only failed its read-back check.
+    """
+    try:
+        save_credentials(credentials)
+        save_config(state_dir, folder_id)
+    except DriveError as error:
+        if previous is None:
+            raise
+        try:
+            save_credentials(previous)
+        except DriveError:
+            raise DriveError(f"{error} The previous Google access could not be restored "
+                             "either. Run the setup again.") from None
+        raise DriveError(f"{error} The previous Google access was kept.") from None
+
+
 def display_text(value):
     # Drive folder names must not run terminal control sequences.
     return "".join(char if char.isprintable() else "?" for char in value)
@@ -204,21 +226,13 @@ def main(argv=None):
         except DriveError:
             # Missing or unreadable: there is no working access to keep.
             previous = None
+        # Account and folder only work as a pair. Saving takes moments, so
+        # Ctrl-C is ignored until both are saved or the old pair is back.
+        interrupt_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
         try:
-            save_credentials(credentials)
-            save_config(args.state_dir, folder_id)
-        except (DriveError, KeyboardInterrupt) as error:
-            # The old folder configuration must keep its matching credentials,
-            # also when the keychain write only failed its read-back check.
-            if previous is None:
-                raise
-            reason = "Setup cancelled." if isinstance(error, KeyboardInterrupt) else str(error)
-            try:
-                save_credentials(previous)
-            except (DriveError, KeyboardInterrupt):
-                raise DriveError(f"{reason} The previous Google access could not be restored "
-                                 "either. Run the setup again.") from None
-            raise DriveError(f"{reason} The previous Google access was kept.") from None
+            save_pair(credentials, previous, args.state_dir, folder_id)
+        finally:
+            signal.signal(signal.SIGINT, interrupt_handler)
         print("Upload check set up. The sync job was not installed or started.")
         return 0
     except (EOFError, KeyboardInterrupt):
