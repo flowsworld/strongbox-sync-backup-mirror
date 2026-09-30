@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/bin/zsh -f
 # Removes the LaunchAgent. The copy in TARGET_DIR and config.local.zsh always stay.
 # --purge also deletes the state folder (logs and status) and the stored
 # upload-check sign-in.
@@ -57,7 +57,7 @@ done
 # install.zsh rejects a TARGET_DIR inside the state folder, but a hand-made
 # layout must not lose the mirror. A broken config.local.zsh cannot say where
 # TARGET_DIR is and does not block the purge.
-if /bin/zsh -c 'source "$1/config.zsh" && [[ -n "$TARGET_DIR" ]] && folder_contains "$2" "$TARGET_DIR"' \
+if /bin/zsh -fc 'source "$1/config.zsh" && [[ -n "$TARGET_DIR" ]] && folder_contains "$2" "$TARGET_DIR"' \
     uninstall "$PROJECT_DIR" "$STATE_DIR" >/dev/null 2>&1; then
     print -ru2 -- "Kept $STATE_DIR, because TARGET_DIR lies inside it."
     failed=1

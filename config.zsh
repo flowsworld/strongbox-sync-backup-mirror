@@ -1,4 +1,4 @@
-# Shared settings for sync.zsh, install.zsh, and setup-google-drive.sh.
+# Shared settings for sync.zsh, install.zsh, uninstall.zsh, and setup-google-drive.sh.
 # Personal values belong in the untracked config.local.zsh, see
 # config.local.example.zsh. STRONGBOX_* environment variables override both,
 # for example in isolated test runs.
@@ -20,8 +20,24 @@ fi
 
 # %x is the file being sourced, independent of the calling script.
 LOCAL_CONFIG="${${(%):-%x}:A:h}/config.local.zsh"
+LOCAL_CONFIG_BROKEN=0
+# The status of source is that of the file's last command, which says nothing
+# about the file. A syntax check does; config_problem reports a broken file.
+# The file runs like a plain zsh script at top level, so declarations stay
+# global: the callers' set -eu must not stop it halfway, for example at an
+# unset variable, and drop the later settings.
 if [[ -f "$LOCAL_CONFIG" ]]; then
-    source "$LOCAL_CONFIG" || return 1
+    if [[ -r "$LOCAL_CONFIG" ]] && /bin/zsh -fn "$LOCAL_CONFIG"; then
+        CALLER_OPTIONS=()
+        [[ ! -o errexit ]] || CALLER_OPTIONS+=(errexit)
+        [[ ! -o nounset ]] || CALLER_OPTIONS+=(nounset)
+        unsetopt errexit nounset
+        source "$LOCAL_CONFIG" || :
+        (( ! ${#CALLER_OPTIONS} )) || setopt $CALLER_OPTIONS
+        unset CALLER_OPTIONS
+    else
+        LOCAL_CONFIG_BROKEN=1
+    fi
 fi
 
 DATABASE_NAME="${STRONGBOX_DATABASE_NAME:-$DATABASE_NAME}"
@@ -41,10 +57,26 @@ folder_contains() {
     [[ "${${2:A}%/}/" == "${${1:A}%/}/"* ]]
 }
 
+# Prints a problem of STATE_DIR itself, or nothing. sync.zsh writes its error
+# state only into a STATE_DIR without such a problem.
+state_dir_problem() {
+    if [[ "$STATE_DIR" != /* ]]; then
+        print -r -- 'STATE_DIR must be an absolute path.'
+    elif [[ "$TARGET_DIR" == /* ]] &&
+        { folder_contains "$STATE_DIR" "$TARGET_DIR" || folder_contains "$TARGET_DIR" "$STATE_DIR"; }; then
+        # Keeps the mirror out of the folder that uninstall.zsh --purge deletes.
+        print -r -- 'STATE_DIR and TARGET_DIR must not contain each other.'
+    fi
+}
+
 # Prints the first configuration problem, or nothing for a valid configuration.
 # Checks only the form of the values; callers check whether folders exist.
 config_problem() {
-    if [[ ! -f "$LOCAL_CONFIG" && ( -z "$DATABASE_NAME" || -z "$TARGET_DIR" ) ]]; then
+    local state_problem
+    state_problem=$(state_dir_problem)
+    if (( LOCAL_CONFIG_BROKEN )); then
+        print -r -- 'config.local.zsh cannot be read or has a syntax error. Fix it, then run the command again.'
+    elif [[ ! -f "$LOCAL_CONFIG" && ( -z "$DATABASE_NAME" || -z "$TARGET_DIR" ) ]]; then
         print -r -- 'Copy config.local.example.zsh to config.local.zsh and set DATABASE_NAME and TARGET_DIR.'
     elif [[ -z "$DATABASE_NAME" || "$DATABASE_NAME" == */* ]]; then
         print -r -- 'Set DATABASE_NAME in config.local.zsh, as a file name without a path.'
@@ -52,14 +84,11 @@ config_problem() {
         print -r -- 'Set TARGET_DIR in config.local.zsh to an absolute path.'
     elif [[ "$BACKUP_ROOT" != /* || "$PREFERENCES" != /* ]]; then
         print -r -- 'BACKUP_ROOT and PREFERENCES must be absolute paths.'
-    elif [[ "$STATE_DIR" != /* ]]; then
-        print -r -- 'STATE_DIR must be an absolute path.'
+    elif [[ -n "$state_problem" ]]; then
+        print -r -- "$state_problem"
     elif [[ "$PYTHON" != /* ]]; then
         # Only the form: sync.zsh checks the version when the upload check runs.
         print -r -- 'PYTHON must be an absolute path.'
-    elif folder_contains "$STATE_DIR" "$TARGET_DIR" || folder_contains "$TARGET_DIR" "$STATE_DIR"; then
-        # Keeps the mirror out of the folder that uninstall.zsh --purge deletes.
-        print -r -- 'STATE_DIR and TARGET_DIR must not contain each other.'
     elif [[ "$NOTIFY" != [01] ]]; then
         print -r -- 'NOTIFY must be 0 or 1.'
     elif [[ "$CLOUD_WARNING_SECONDS" != <1-> ]]; then

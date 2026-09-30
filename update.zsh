@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/bin/zsh -f
 # Downloads the newest version of this checkout and reinstalls the job with it.
 # config.local.zsh is not tracked by git and stays as it is.
 set -eu
@@ -20,4 +20,4 @@ else
     print 'Not a git checkout, so nothing is downloaded. Reinstalling the current files.'
 fi
 # exec runs the install.zsh just downloaded, not a copy from before the pull.
-exec /bin/zsh "$PROJECT_DIR/install.zsh"
+exec /bin/zsh -f "$PROJECT_DIR/install.zsh"

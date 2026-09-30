@@ -100,6 +100,19 @@ class SyncTest(StrongboxFixture):
         self.run_sync()
         self.assertFalse((self.state / "last-error").exists())
 
+    def test_source_emptied_after_selection_preserves_target(self):
+        self.destination.write_bytes(b"valid previous mirror")
+        (self.source / "test.bak").write_bytes(b"new backup")
+        # Empties the selected backup right before the copy's first stat call.
+        result = subprocess.run([
+            "/bin/zsh", "-fc",
+            'stat() { [[ -s "$3" ]] && : > "$3"; /usr/bin/stat "$@"; }; f=$1; shift; source "$f"',
+            "sync-test", str(ROOT / "sync.zsh"),
+        ], env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("empty", result.stderr)
+        self.assertEqual(self.destination.read_bytes(), b"valid previous mirror")
+
     def test_missing_drive_is_not_created(self):
         (self.source / "test.bak").write_bytes(b"backup")
         self.target.rmdir()
@@ -116,10 +129,25 @@ class SyncTest(StrongboxFixture):
 
     def test_running_job_is_not_duplicated(self):
         self.state.mkdir()
-        (self.state / "sync.lock").write_text(f"{os.getpid()}\n")
+        lock = self.state / "sync.lock"
+        lock.touch()
+        # A second process holds the lock like a running job.
+        holder = subprocess.Popen(["/bin/zsh", "-fc", 'zmodload zsh/system; zsystem flock -f fd "$1"; print locked; sleep 30',
+                                   "holder", str(lock)], stdout=subprocess.PIPE, text=True)
+        self.addCleanup(holder.wait)
+        self.addCleanup(holder.kill)
+        self.assertEqual(holder.stdout.readline(), "locked\n")
         (self.source / "test.bak").write_bytes(b"backup")
         self.run_sync()
         self.assertFalse(self.destination.exists())
+
+    def test_stale_lock_with_a_reused_pid_does_not_block(self):
+        self.state.mkdir()
+        # Left behind by a killed run; the PID now belongs to another live process.
+        (self.state / "sync.lock").write_text(f"{os.getpid()}\n")
+        (self.source / "test.bak").write_bytes(b"backup")
+        self.run_sync()
+        self.assertEqual(self.destination.read_bytes(), b"backup")
 
     def test_lock_failure_is_reported_and_foreign_lock_preserved(self):
         self.state.mkdir()
@@ -132,6 +160,13 @@ class SyncTest(StrongboxFixture):
         self.assertIn("lock", (self.state / "sync.log").read_text())
         self.assertTrue((self.state / "last-error").is_file())
 
+    def test_unopenable_lock_is_reported_not_skipped(self):
+        self.state.mkdir()
+        lock = self.state / "sync.lock"
+        lock.touch(mode=0o200)
+        (self.source / "test.bak").write_bytes(b"backup")
+        self.assertIn("lock", self.run_sync(1).stderr)
+
     def test_log_failure_stops_copy_and_is_reported(self):
         self.state.mkdir()
         (self.state / "sync.log").mkdir()
@@ -140,7 +175,10 @@ class SyncTest(StrongboxFixture):
         self.assertFalse(self.destination.exists())
         self.assertIn("log file", result.stderr)
         self.assertTrue((self.state / "last-error").is_file())
-        self.assertFalse((self.state / "sync.lock").exists())
+        # The failed run released its lock.
+        (self.state / "sync.log").rmdir()
+        self.run_sync()
+        self.assertEqual(self.destination.read_bytes(), b"backup")
 
     def test_malformed_metadata_error_is_stable_across_runs(self):
         self.preferences.write_bytes(plistlib.dumps({"databases": plistlib.dumps({})}))
@@ -170,7 +208,20 @@ class SyncTest(StrongboxFixture):
         self.assertEqual(config["StartCalendarInterval"],
                          [{"Minute": minute} for minute in [0, 15, 30, 45]])
         self.assertTrue(config["RunAtLoad"])
-        self.assertEqual(config["ProgramArguments"], ["/bin/zsh", str(ROOT / "sync.zsh")])
+        self.assertEqual(config["ProgramArguments"], ["/bin/zsh", "-f", str(ROOT / "sync.zsh")])
+
+    def test_job_ignores_the_users_zshenv(self):
+        result = subprocess.run(["/bin/zsh", str(ROOT / "install.zsh"), "--print-plist"],
+                                env=self.env, capture_output=True)
+        job = plistlib.loads(result.stdout)
+        zdotdir = self.base / "zdotdir"
+        zdotdir.mkdir()
+        (zdotdir / ".zshenv").write_text('print -u2 "tool loaded"\nsetopt KSH_ARRAYS\n')
+        (self.source / "test.bak").write_bytes(b"backup")
+        result = subprocess.run(job["ProgramArguments"], capture_output=True, text=True, env={
+            "HOME": os.environ["HOME"], "ZDOTDIR": str(zdotdir), **job["EnvironmentVariables"]})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.destination.read_bytes(), b"backup")
 
     def test_upload_check_runs_after_copy_and_when_unchanged(self):
         # A Python stand-in records checker invocations, without credentials/network.
@@ -218,6 +269,52 @@ class SyncTest(StrongboxFixture):
                 self.run_sync(1)
                 self.assertEqual((self.state / "sync.log").read_text(), log)
 
+    def fake_osascript(self):
+        """Records notifications; fails while the returned marker file exists."""
+        script, calls, failing = self.base / "osascript", self.base / "notifications", self.base / "osascript-fails"
+        script.write_text('#!/bin/zsh -f\nprint -r -- "$2" >> "$NOTIFICATIONS"\n[[ ! -e "$OSASCRIPT_FAILS" ]]\n')
+        script.chmod(0o700)
+        self.env.update(STRONGBOX_OSASCRIPT=str(script), STRONGBOX_NOTIFY="1",
+                        NOTIFICATIONS=str(calls), OSASCRIPT_FAILS=str(failing))
+        failing.touch()
+        return calls, failing
+
+    def test_failed_error_notification_is_retried_once_delivered(self):
+        calls, failing = self.fake_osascript()
+        self.run_sync(1)
+        failing.unlink()
+        self.run_sync(1)
+        self.run_sync(1)
+        self.assertEqual(calls.read_text().count("No Strongbox backup found."), 2)
+        self.assertEqual((self.state / "sync.log").read_text().count("No Strongbox backup found."), 1)
+
+    def test_turning_notifications_off_drops_a_pending_one(self):
+        calls, failing = self.fake_osascript()
+        self.run_sync(1)
+        failing.unlink()
+        self.env["STRONGBOX_NOTIFY"] = "0"
+        self.run_sync(1)
+        self.env["STRONGBOX_NOTIFY"] = "1"
+        self.run_sync(1)
+        # Only the failed first attempt: like the upload check, a pending
+        # notification does not outlive NOTIFY=0.
+        self.assertEqual(calls.read_text().count("No Strongbox backup found."), 1)
+
+    def test_failed_python_notification_is_retried_once_delivered(self):
+        calls, failing = self.fake_osascript()
+        self.env["STRONGBOX_PYTHON"] = str(self.base / "missing-python")
+        self.state.mkdir()
+        (self.state / "upload-check.json").write_text('{"provider":"google-drive","folder_id":"folder"}')
+        (self.source / "test.bak").write_bytes(b"backup")
+        self.run_sync(1)
+        self.assertTrue(json.loads((self.state / "cloud-status.json").read_text())["notification_pending"])
+        failing.unlink()
+        self.run_sync(1)
+        self.run_sync(1)
+        self.assertEqual(calls.read_text().count("Python"), 2)
+        self.assertEqual((self.state / "sync.log").read_text().count("CLOUD: Python"), 1)
+        self.assertFalse(json.loads((self.state / "cloud-status.json").read_text())["notification_pending"])
+
     def test_orphaned_temporary_copy_is_removed(self):
         orphan = self.target / f".{self.database_name}.AbCd1234"
         orphan.write_bytes(b"interrupted copy")
@@ -247,11 +344,17 @@ class SyncTest(StrongboxFixture):
         self.assertIn("PYTHON must be an absolute path", result.stderr)
 
     def test_invalid_configuration_writes_nothing(self):
-        # A state folder inside the mirror must not receive log or lock files.
+        # A state folder inside the mirror must not receive log or lock files,
+        # also for an installed job, which has a config.local.zsh.
+        project = self.base / "project"
+        project.mkdir()
+        for script in ("sync.zsh", "config.zsh", "strongbox-source.zsh"):
+            (project / script).write_bytes((ROOT / script).read_bytes())
+        (project / "config.local.zsh").write_text("# Values come from the environment.\n")
         state = self.target / "state"
         self.env["STRONGBOX_STATE_DIR"] = str(state)
         (self.source / "test.bak").write_bytes(b"backup")
-        result = subprocess.run(["/bin/zsh", str(ROOT / "sync.zsh")],
+        result = subprocess.run(["/bin/zsh", str(project / "sync.zsh")],
                                 env=self.env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 1)
         self.assertIn("must not contain each other", result.stderr)
@@ -274,6 +377,8 @@ class SyncTest(StrongboxFixture):
                 self.assertEqual(result.returncode, 1)
                 # Without config.local.zsh the message says how to start.
                 self.assertIn("Copy config.local.example.zsh to config.local.zsh", result.stderr)
+                # A fresh checkout is not a broken job: nothing is written.
+                self.assertFalse(self.state.exists())
                 result = subprocess.run(["/bin/zsh", str(project / "install.zsh"), "--print-plist"],
                                         env=env, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 1)
@@ -341,9 +446,9 @@ class SourceTest(StrongboxFixture):
 
     def test_missing_and_ambiguous_mapping_fail(self):
         self.write_metadata(self.identifier, database_name="other.kdbx")
-        self.run_source(expected=1)
+        self.assertIn("Check DATABASE_NAME", self.run_source(expected=1).stderr)
         self.write_metadata(self.identifier, ambiguous=True)
-        self.run_source(expected=1)
+        self.assertIn("unambiguously", self.run_source(expected=1).stderr)
 
     def test_creation_time_not_modification_time(self):
         older = self.source / "20260926_120000_001.bak"

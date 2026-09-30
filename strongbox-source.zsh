@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/bin/zsh -f
 # stdout: newest backup file or folder to watch. Errors: stderr and exit 1.
 # Knows Strongbox metadata and backup selection; never decrypts a database.
 set -u
@@ -82,6 +82,7 @@ for (( index = 0; index < count; index++ )); do
     matches[$identifier]=1
 done
 
+(( ${#matches} )) || fail 'No Strongbox Sync database with this name was found. Check DATABASE_NAME.'
 (( ${#matches} == 1 )) || fail 'The Strongbox Sync database cannot be matched unambiguously.'
 identifier="${(k)matches}"
 directory="$backup_root/$identifier"

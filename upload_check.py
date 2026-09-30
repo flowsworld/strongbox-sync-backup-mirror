@@ -212,6 +212,10 @@ def check(target: Path, state_dir: Path, name: str, warning_seconds: int, notify
         ensure_unchanged(target, before)
         state = next_state(previous, context, local, now, remote, before.st_size, warning_seconds)
     except (CheckError, OSError) as error:
+        # An error before the target or the content is known changes neither;
+        # like an API error it pauses the waiting time instead of resetting it.
+        context = context or previous.get("context", "")
+        sha256 = sha256 or previous.get("local_sha256", "")
         same_content = previous.get("context") == context and previous.get("local_sha256") == sha256
         state = {
             "context": context, "local_sha256": sha256, "checked_at": now,
