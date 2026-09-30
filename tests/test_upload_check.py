@@ -161,12 +161,47 @@ class CloudCheckTest(unittest.TestCase):
         self.find.assert_not_called()
         self.assertEqual(self.run_check(1900)["status"], "confirmed")
 
+    def test_wrongly_typed_saved_status_is_reported_once_and_replaced(self):
+        self.find.return_value = None
+        valid = self.run_check()
+        valid["previous_mismatch_at"] = 1000
+        for change in ({"status": []}, {"status": {}}, {"pending_seconds": None}):
+            with self.subTest(change=change):
+                (self.state_dir / "cloud-status.json").write_text(json.dumps({**valid, **change}))
+                state = self.run_check(1900, expected=1)
+                self.assertIn("reset", state["message"])
+                self.assertEqual(self.run_check(2800)["status"], "pending")
+
     def test_broken_log_reports_failure_but_saves_current_status(self):
         (self.state_dir / "sync.log").mkdir()
         with self.assertRaises(OSError):
             self.run_check()
         state = json.loads((self.state_dir / "cloud-status.json").read_text())
         self.assertEqual(state["status"], "confirmed")
+
+    def test_broken_log_still_notifies_and_logs_on_the_next_run(self):
+        self.find.side_effect = CheckError("Sign-in expired.")
+        (self.state_dir / "sync.log").mkdir()
+        with patch.object(upload_check.subprocess, "run", return_value=Mock(returncode=0)) as notify:
+            with self.assertRaises(OSError):
+                self.run_check(notify=True)
+            self.assertEqual(notify.call_count, 1)
+            (self.state_dir / "sync.log").rmdir()
+            self.run_check(1900, expected=1, notify=True)
+            self.run_check(2800, expected=1, notify=True)
+        self.assertEqual(notify.call_count, 1)
+        self.assertEqual((self.state_dir / "sync.log").read_text().count("Sign-in expired."), 1)
+
+    def test_failed_notification_is_retried_until_delivered(self):
+        self.find.side_effect = CheckError("Sign-in expired.")
+        with patch.object(upload_check.subprocess, "run", return_value=Mock(returncode=1)):
+            with self.assertRaises(CheckError):
+                self.run_check(notify=True)
+        with patch.object(upload_check.subprocess, "run", return_value=Mock(returncode=0)) as notify:
+            self.run_check(1900, expected=1, notify=True)
+            self.run_check(2800, expected=1, notify=True)
+        self.assertEqual(notify.call_count, 1)
+        self.assertEqual((self.state_dir / "sync.log").read_text().count("Sign-in expired."), 1)
 
     def test_notification_failure_cannot_leave_stale_confirmation(self):
         for failure in (Mock(returncode=1), subprocess.TimeoutExpired("osascript", 15)):

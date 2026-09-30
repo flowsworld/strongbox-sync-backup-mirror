@@ -146,7 +146,8 @@ class SetupTest(unittest.TestCase):
         for folder in ("folder123", "https://drive.google.com/drive/folders/folder123?usp=sharing",
                        "https://drive.google.com/drive/u/1/folders/folder123"):
             self.assertEqual(google_drive_setup.parse_folder(folder), "folder123")
-        for folder in ("https://drive.google.com.evil/drive/folders/folder123", "https://user@drive.google.com/drive/folders/folder123", "../folder"):
+        for folder in ("https://drive.google.com.evil/drive/folders/folder123", "https://user@drive.google.com/drive/folders/folder123", "../folder",
+                       "https://[drive.google.com/drive/folders/folder123"):
             with self.assertRaises(google_drive.DriveError):
                 google_drive_setup.parse_folder(folder)
         with tempfile.TemporaryDirectory() as directory:
@@ -229,6 +230,46 @@ class SetupTest(unittest.TestCase):
         self.assertIn("Custom.kdbx: not in the cloud folder yet", output.getvalue())
         save.assert_not_called()
         config.assert_not_called()
+
+    def run_confirmed_setup(self, keychain, save_config, save_credentials=None):
+        """Confirms a setup with new credentials against a fake keychain list."""
+        def save(credentials):
+            keychain.append(credentials)
+        with patch("google_drive_setup.read_client", return_value=(CREDENTIALS.client_id, CREDENTIALS.client_secret)), \
+                patch("google_drive_setup.authorize", return_value=CREDENTIALS), patch("google_drive_setup.GoogleDrive") as drive, \
+                patch("google_drive_setup.load_credentials", side_effect=lambda: keychain[-1]), \
+                patch("google_drive_setup.save_credentials", side_effect=save_credentials or save), \
+                patch("google_drive_setup.save_config", side_effect=save_config), \
+                patch("builtins.input", return_value="yes"), patch("sys.stdout", new_callable=io.StringIO), \
+                patch("sys.stderr", new_callable=io.StringIO) as errors:
+            drive.return_value.account_email.return_value = "flo@example.test"
+            drive.return_value.get_folder.return_value = {"name": "fixture folder"}
+            drive.return_value.find_file.return_value = None
+            result = google_drive_setup.main(["--client-json", "fixture.json", "--folder-url", "folder456",
+                                              "--state-dir", "state", "--name", "Passwords.kdbx"])
+        return result, errors.getvalue()
+
+    def test_failed_config_restores_previous_credentials(self):
+        previous = google_drive.Credentials(CREDENTIALS.client_id, CREDENTIALS.client_secret, "previous-refresh")
+        keychain = [previous]
+        failure = google_drive.DriveError("Could not save the upload check configuration.")
+        result, errors = self.run_confirmed_setup(keychain, failure)
+        self.assertEqual(result, 1)
+        self.assertEqual(keychain[-1], previous)
+        self.assertIn("previous Google access was kept", errors)
+
+    def test_failed_restore_is_reported(self):
+        previous = google_drive.Credentials(CREDENTIALS.client_id, CREDENTIALS.client_secret, "previous-refresh")
+        keychain = [previous]
+
+        def save(credentials):
+            if credentials == previous:
+                raise google_drive.DriveError("Could not save Google access in the macOS keychain.")
+            keychain.append(credentials)
+        failure = google_drive.DriveError("Could not save the upload check configuration.")
+        result, errors = self.run_confirmed_setup(keychain, failure, save)
+        self.assertEqual(result, 1)
+        self.assertIn("could not be restored", errors)
 
     def test_atomic_public_config_has_restricted_permissions(self):
         with tempfile.TemporaryDirectory() as directory:

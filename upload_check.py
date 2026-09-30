@@ -60,14 +60,20 @@ def previous_state(path: Path) -> dict:
     if not path.exists():
         return {}
     value = read_json(path)
-    if value.get("status") not in {"confirmed", "pending", "overdue", "error"}:
+    status = value.get("status")
+    if not isinstance(status, str) or status not in {"confirmed", "pending", "overdue", "error"}:
         raise CheckError("The saved cloud status is invalid.")
     for key in ("pending_seconds", "checked_at", "last_confirmed_at", "previous_mismatch_at"):
         number = value.get(key)
-        if number is not None and (type(number) is not int or number < 0):
+        optional = key in {"last_confirmed_at", "previous_mismatch_at"}
+        if not (number is None and optional) and (type(number) is not int or number < 0):
             raise CheckError("The saved cloud status is invalid.")
     for key in ("context", "local_sha256", "message"):
         if not isinstance(value.get(key), str):
+            raise CheckError("The saved cloud status is invalid.")
+    # Missing in files written before retries existed.
+    for key in ("log_pending", "notification_pending"):
+        if key in value and type(value[key]) is not bool:
             raise CheckError("The saved cloud status is invalid.")
     return value
 
@@ -136,27 +142,49 @@ def next_state(previous: dict, context: str, local: dict[str, str], now: int,
 
 
 def report(state_dir: Path, previous: dict, state: dict, notify: bool) -> None:
+    """Saves the result, then logs a change and notifies about a new problem.
+
+    log_pending and notification_pending mark a log entry or notification that
+    failed. The next run with the same result retries it; delivered ones stay
+    deduplicated.
+    """
+    path = state_dir / "cloud-status.json"
+    state["log_pending"] = previous.get("log_pending") is True or (
+        previous.get("status"), previous.get("message"), previous.get("local_sha256")
+    ) != (state["status"], state["message"], state["local_sha256"])
+    # New content must not report the same API error again.
+    new_problem = previous.get("notification_pending") is True or (
+        previous.get("status"), previous.get("message")
+    ) != (state["status"], state["message"])
+    state["notification_pending"] = notify and new_problem and state["status"] in {"error", "overdue"}
     # The result must be current even if logging or the notification fails.
-    write_json(state_dir / "cloud-status.json", state)
-    changed = (previous.get("status"), previous.get("message"), previous.get("local_sha256")) != (
-        state["status"], state["message"], state["local_sha256"]
-    )
-    if changed:
-        timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
-        with (state_dir / "sync.log").open("a") as file:
-            file.write(f"{timestamp} CLOUD: {state['message']}\n")
+    write_json(path, state)
+    if not (state["log_pending"] or state["notification_pending"]):
+        return
+    failure: Exception | None = None
+    if state["log_pending"]:
         print(state["message"])
-        # New content must not report the same API error again.
-        new_problem = (previous.get("status"), previous.get("message")) != (
-            state["status"], state["message"]
-        )
-        if notify and new_problem and state["status"] in {"error", "overdue"}:
+        timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            with (state_dir / "sync.log").open("a") as file:
+                file.write(f"{timestamp} CLOUD: {state['message']}\n")
+            state["log_pending"] = False
+        except OSError as error:
+            failure = error
+    if state["notification_pending"]:
+        try:
             result = subprocess.run([
                 "/usr/bin/osascript", "-", state["message"],
             ], input='on run argv\ndisplay notification (item 1 of argv) with title "Strongbox upload"\nend run\n',
                 capture_output=True, text=True, timeout=15)
             if result.returncode:
                 raise CheckError("Could not show the cloud error notification.")
+            state["notification_pending"] = False
+        except (CheckError, OSError, subprocess.TimeoutExpired) as error:
+            failure = failure or error
+    write_json(path, state)
+    if failure is not None:
+        raise failure
 
 
 def check(target: Path, state_dir: Path, name: str, warning_seconds: int, notify: bool,

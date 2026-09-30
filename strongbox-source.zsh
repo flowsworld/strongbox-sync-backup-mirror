@@ -47,6 +47,18 @@ get_string() {
     print -r -- "$value"
 }
 
+# Decodes %XX escapes exactly once into REPLY; fails on a malformed escape.
+# Strongbox stores the file name percent-encoded (URLComponents.path), so
+# "My Passwords.kdbx" appears as "My%20Passwords.kdbx" and a literal
+# "My%20Passwords.kdbx" as "My%2520Passwords.kdbx".
+percent_decode() {
+    local value="$1"
+    [[ "${value//\%[[:xdigit:]][[:xdigit:]]/}" != *%* ]] || return 1
+    # Keep literal backslashes, then let print turn each %XX into \xXX.
+    value="${value//\\/\\\\}"
+    print -v REPLY -- "${value//\%/\\x}"
+}
+
 # Older plutil versions crash when extracting the whole array with UID
 # references. The converted XML file can be counted without that step.
 count=$(xmllint --xpath 'count(/plist/dict/key[.="$objects"]/following-sibling::*[1][self::array]/*)' "$archive" 2>/dev/null) ||
@@ -60,8 +72,10 @@ for (( index = 0; index < count; index++ )); do
     database_url=$(get_string "$url_string_index") || continue
     # Local or Google Drive databases with the same name are not a source.
     database_path="${database_url%%\?*}"
-    [[ "$database_path" == "strongbox-cloud:/$database_name" ||
-       "$database_path" == "strongbox-cloud:///$database_name" ]] || continue
+    [[ "$database_path" == strongbox-cloud:/* ]] || continue
+    # Accepts strongbox-cloud:/NAME and strongbox-cloud:///NAME.
+    percent_decode "${${database_path#strongbox-cloud:/}#//}" || continue
+    [[ "$REPLY" == "$database_name" ]] || continue
     identifier=$(get_string "$uuid_index") || fail 'The database UUID is missing.'
     [[ "$identifier" =~ '^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$' ]] ||
         fail 'The database UUID is invalid.'

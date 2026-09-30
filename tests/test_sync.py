@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
+from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -37,7 +38,8 @@ class StrongboxFixture(unittest.TestCase):
                         STRONGBOX_PYTHON=sys.executable,
                         STRONGBOX_CLOUD_WARNING_SECONDS="1800")
 
-    def write_metadata(self, identifier, ambiguous=False, database_name="Passwords.kdbx"):
+    def write_metadata(self, identifier, ambiguous=False, database_name="Passwords.kdbx", extra=()):
+        """extra: further (identifier, URL path) pairs, already percent-encoded."""
         objects = ["$null"]
 
         def ref(value):
@@ -49,7 +51,10 @@ class StrongboxFixture(unittest.TestCase):
             url_ref = ref({"NS.relative": ref(url), "NS.base": plistlib.UID(0)})
             objects.append({"uuid": uuid, "fileUrl": url_ref})
 
-        entry(identifier, f"strongbox-cloud:/{database_name}?uuid={identifier}")
+        # Strongbox builds the URL with URLComponents.path, which percent-encodes the name.
+        entry(identifier, f"strongbox-cloud:/{quote(database_name)}?uuid={identifier}")
+        for other_identifier, path in extra:
+            entry(other_identifier, f"strongbox-cloud:/{path}")
         entry("99999999-9999-9999-9999-999999999999",
               f"sb-sync-managed-file:///Drive/{database_name}")
         entry("88888888-8888-8888-8888-888888888888", "strongbox-cloud:/unrelated.kdbx")
@@ -234,6 +239,13 @@ class SyncTest(StrongboxFixture):
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("must not contain each other", result.stderr)
 
+    def test_python_must_be_an_absolute_path(self):
+        env = dict(self.env, STRONGBOX_PYTHON="relative-python")
+        result = subprocess.run(["/bin/zsh", str(ROOT / "install.zsh"), "--print-plist"],
+                                env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("PYTHON must be an absolute path", result.stderr)
+
     def test_invalid_configuration_writes_nothing(self):
         # A state folder inside the mirror must not receive log or lock files.
         state = self.target / "state"
@@ -358,6 +370,26 @@ class SourceTest(StrongboxFixture):
         (new_source / "test.bak").write_bytes(b"new location")
         self.write_metadata(new_id)
         self.assertEqual(self.run_source().stdout.strip(), str(new_source / "test.bak"))
+
+    def test_encoded_names_select_their_own_database(self):
+        names = {self.identifier: "My Passwords.kdbx", "44444444-4444-4444-4444-444444444444": "My%20Passwords.kdbx",
+                 "55555555-5555-5555-5555-555555555555": "Pässwörter.kdbx"}
+        for identifier, name in names.items():
+            (self.backup_root / identifier).mkdir(exist_ok=True)
+        self.write_metadata(self.identifier, database_name=names[self.identifier],
+                            extra=[(identifier, quote(name)) for identifier, name in names.items()
+                                   if identifier != self.identifier])
+        for identifier, name in names.items():
+            with self.subTest(name=name):
+                self.database_name = name
+                self.assertEqual(self.run_source("watch-dir").stdout.strip(),
+                                 str(self.backup_root / identifier))
+
+    def test_malformed_encoding_is_not_a_match(self):
+        self.write_metadata(self.identifier, database_name="other.kdbx",
+                            extra=[(self.identifier, "Passw%2.kdbx")])
+        self.database_name = "Passw%2.kdbx"
+        self.run_source("watch-dir", expected=1)
 
     def test_unrelated_database_is_ignored(self):
         (self.source / "test.bak").write_bytes(b"right")
