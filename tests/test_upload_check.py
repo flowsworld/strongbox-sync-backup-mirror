@@ -110,6 +110,19 @@ class CloudCheckTest(unittest.TestCase):
         self.assertEqual(self.run_check(10900, expected=1)["status"], "overdue")
         self.assertEqual(self.target.read_bytes(), b"encrypted fixture")
 
+    def test_unreadable_config_pauses_pending_timer_like_an_api_error(self):
+        self.find.return_value = None
+        self.run_check()
+        self.assertEqual(self.run_check(1900)["pending_seconds"], 900)
+        config = self.state_dir / "upload-check.json"
+        config.chmod(0)
+        self.addCleanup(config.chmod, 0o600)
+        state = self.run_check(2800, expected=1)
+        self.assertEqual(state["status"], "error")
+        self.assertEqual(state["pending_seconds"], 900)
+        config.chmod(0o600)
+        self.assertEqual(self.run_check(3700)["pending_seconds"], 900)
+
     def test_wakeup_does_not_count_entire_sleep_as_wait(self):
         self.find.return_value = None
         self.run_check()

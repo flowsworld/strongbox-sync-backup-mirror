@@ -67,12 +67,13 @@ The background job may need a macOS privacy permission. See
   is the same, it writes nothing.
 - A changed backup is copied to a temporary file in the target folder, checked,
   and renamed to `<DATABASE_NAME>`. A missing or empty source or an unclear
-  mapping leaves the target copy unchanged. On each run, `sync.zsh` removes
-  temporary copies (`.<DATABASE_NAME>.XXXXXXXX`) that an interrupted run left
-  in the target folder.
+  mapping leaves the target copy unchanged. On each run that finds its backup,
+  `sync.zsh` removes temporary copies (`.<DATABASE_NAME>.XXXXXXXX`) that an
+  interrupted run left in the target folder.
 - A per-user LaunchAgent starts at login, on watched file changes, and every
   15 minutes. launchd catches up on missed calendar runs after wake. A lock
-  prevents parallel runs.
+  prevents parallel runs. The job starts zsh with `-f`, so your `~/.zshenv`
+  does not affect it.
 
 The source is the newest **local backup**. It is not necessarily the current
 CloudKit state. The next run replaces any change made to the mirrored copy
@@ -106,14 +107,17 @@ attempt.
 | `TARGET_DIR` | yes | none | Existing target folder, absolute path. |
 | `NOTIFY` | no | `1` | `1` shows macOS notifications for errors, `0` turns them off. |
 | `CLOUD_WARNING_SECONDS` | no | `1800` | Time before the upload check reports an overdue upload. Positive integer. |
-| `PYTHON` | no | first of `/opt/homebrew/bin/python3`, `/usr/local/bin/python3`, `/usr/bin/python3` | Absolute path to Python 3.10+ for the upload check. |
+| `PYTHON` | no | first of `/opt/homebrew/bin/python3`, `/usr/local/bin/python3`, `/usr/bin/python3` | Absolute path to Python 3.10+ for the upload check. `/usr/bin/python3` is Python 3.9 on current macOS and fails the version check. |
 | `BACKUP_ROOT` | no | `~/Library/Group Containers/group.strongbox.mac.mcguill/backups` | Strongbox backup folder, without the database UUID. |
 | `PREFERENCES` | no | `~/Library/Group Containers/group.strongbox.mac.mcguill/Library/Preferences/group.strongbox.mac.mcguill.plist` | Strongbox preferences that contain the database mapping. |
 
 `sync.zsh`, `install.zsh`, and `setup-google-drive.sh` validate the configuration and
-stop with a message if `DATABASE_NAME` or `TARGET_DIR` is missing or a value is
-malformed. `NOTIFY` must be `0` or `1`, `CLOUD_WARNING_SECONDS` a positive
-integer, and all paths absolute. `DATABASE_NAME` must not contain a `/`.
+stop with a message if `config.local.zsh` has a syntax error, `DATABASE_NAME` or
+`TARGET_DIR` is missing, or a value is malformed. `NOTIFY` must be `0` or `1`,
+`CLOUD_WARNING_SECONDS` a positive integer, and all paths absolute.
+`DATABASE_NAME` must not contain a `/`. The job reads `config.local.zsh` on
+every run, so it reports such an error like any other: in `sync.log`,
+`last-error`, and a notification.
 
 The installer writes every value into the LaunchAgent's environment. The job
 keeps the values from install time, so run `/bin/zsh install.zsh` again after
@@ -182,13 +186,18 @@ Logs and status files live in the state folder
 - `sync.log`: local copies, new errors, and recoveries.
 - `launchd.log`: output of the background process.
 - `last-error`: the last error, used to suppress repeated notifications.
+- `last-error-pending`: exists while the notification about `last-error` could
+  not be shown yet.
+- `sync.lock`: the lock against parallel runs.
 - `cloud-status.json`: result of the last upload check, if enabled.
 
 A new error shows a macOS notification through `osascript`. The same error
-does not notify again until a run succeeds. Successful runs do not notify.
+does not notify again until a run succeeds. If the notification fails, the
+next run with the same error tries again. Successful runs do not notify.
 
 If the lock cannot be created, the run fails. A lock held by a running process
-skips the run without an error. If `sync.log` is not writable, the run stops
+skips the run without an error. The system releases the lock when a run ends,
+also after a crash, so a leftover `sync.lock` never blocks a run. If `sync.log` is not writable, the run stops
 before copying. A failed later log entry is also reported as an error. The
 notification works without a writable `sync.log`; its output then goes to
 `launchd.log`. Metadata errors use fixed messages without random temporary
@@ -223,7 +232,9 @@ project:
 It reads `DATABASE_NAME` from the configuration. It guides you
 through enabling the Drive API, configuring the Google Auth Platform, and
 creating an OAuth client of type **Desktop app**. It needs the downloaded
-client JSON and the browser address of the Drive folder that holds the copy.
+client JSON, which you can drag into the Terminal window, and the browser
+address of the Drive folder that holds the copy. For a copy directly in
+My Drive, use the address of My Drive itself.
 The sign-in opens the default browser and accepts the redirect only on
 `127.0.0.1`, with PKCE and a random state check. You have five minutes to
 finish the sign-in. Before saving, the script shows the signed-in account and
@@ -281,11 +292,12 @@ counts as a pending upload.
 `checked_at` and `last_confirmed_at` are Unix timestamps. With `error`, an
 earlier confirmation does not confirm the current check. The warning time
 counts only the time between successful checks that found a difference, at
-most 15 minutes per interval. API errors pause the count; new local content or
-a new target folder resets it. An overdue upload or a new check error notifies
+most 15 minutes per interval. API errors and other failed checks pause the
+count; new local content or a new target folder resets it. An overdue upload or a new check error notifies
 if `NOTIFY=1`. Repeats of the same message stay silent. The check writes status
 changes to `sync.log`. If the log entry or the notification fails, the next run
-with the same result tries it again.
+with the same result tries it again. This also applies to the error for a
+missing Python.
 
 If `cloud-status.json` is corrupt or unreadable, the next run reports this once
 with an `error` status and a notification, then replaces the file. The run
@@ -293,7 +305,8 @@ after that checks normally.
 
 A cloud error does not overwrite the local sync's `last-error` and does not
 block the local copy. The job exits with code 1 on cloud errors and overdue
-uploads, and with code 0 when the upload is confirmed or pending. To see the
+uploads, and with code 0 when the upload is confirmed or pending. A failed log
+entry or notification of the check also exits with code 1. To see the
 full state, look at the exit code, `last-error`, and `cloud-status.json`
 together.
 
@@ -370,8 +383,10 @@ The tests use generated files and metadata in temporary folders. They install
 no job and touch no real password database. They test the source mapping and
 backup selection through the source queries, copying and error handling in
 `sync.zsh`, and the generated plist including the shared configuration.
-The lifecycle tests run install, update, a failed reinstall, and uninstall in a
-temporary home folder, with stand-ins for `launchctl` and `security`. The cloud
+The lifecycle tests run install, a failed reinstall, uninstall, the setup
+assistant, and `update.zsh` outside a git checkout in a temporary home folder,
+with stand-ins for `launchctl`, `security`, `osascript`, `open`, and Python.
+The `git pull` of `update.zsh` is not tested. The cloud
 tests use mocked API responses and keychain access. They cover checksums,
 pending uploads, network errors, recovery, ambiguous files, and the OAuth
 redirect without a real Google sign-in.

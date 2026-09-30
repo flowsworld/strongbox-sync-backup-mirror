@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/bin/zsh -f
 # Enables the job for the current user, or refreshes it after a configuration
 # change or update.
 set -eu
@@ -50,14 +50,16 @@ config_error=$(config_problem)
 [[ -z "$config_error" ]] || { print -ru2 -- "$config_error"; exit 1; }
 [[ -d "$TARGET_DIR" ]] || { print -u2 'Create the TARGET_DIR folder first.'; exit 1; }
 SCRIPT="$PROJECT_DIR/sync.zsh"
-SOURCE_DIR=$(/bin/zsh "$PROJECT_DIR/strongbox-source.zsh" watch-dir "$PREFERENCES" "$BACKUP_ROOT" "$DATABASE_NAME")
+SOURCE_DIR=$(/bin/zsh -f "$PROJECT_DIR/strongbox-source.zsh" watch-dir "$PREFERENCES" "$BACKUP_ROOT" "$DATABASE_NAME")
 PLIST=$(plist_path "$LABEL")
 TEMP_PLIST=$(mktemp "${TMPDIR:-/tmp}/strongbox.XXXXXXXX")
 plutil -create xml1 "$TEMP_PLIST"
 plutil -insert Label -string "$LABEL" "$TEMP_PLIST"
 plutil -insert ProgramArguments -array "$TEMP_PLIST"
+# -f: the user's ~/.zshenv must neither print into nor change the job.
 plutil -insert ProgramArguments.0 -string /bin/zsh "$TEMP_PLIST"
-plutil -insert ProgramArguments.1 -string "$SCRIPT" "$TEMP_PLIST"
+plutil -insert ProgramArguments.1 -string -f "$TEMP_PLIST"
+plutil -insert ProgramArguments.2 -string "$SCRIPT" "$TEMP_PLIST"
 plutil -insert EnvironmentVariables -dictionary "$TEMP_PLIST"
 plutil -insert EnvironmentVariables.STRONGBOX_DATABASE_NAME -string "$DATABASE_NAME" "$TEMP_PLIST"
 plutil -insert EnvironmentVariables.STRONGBOX_BACKUP_ROOT -string "$BACKUP_ROOT" "$TEMP_PLIST"
@@ -94,7 +96,9 @@ if job_loaded "$LABEL"; then
     fi
     # Set before stopping: a stop that times out still ends the job later.
     STOPPED_CURRENT=1
-    stop_job "$LABEL"
+    # zsh skips the EXIT trap when ERR_EXIT fires on a failing function; an
+    # explicit exit runs it.
+    stop_job "$LABEL" || exit $?
 fi
 mv -f "$TEMP_PLIST" "$PLIST"
 TEMP_PLIST=''

@@ -1,5 +1,6 @@
 """Isolated HTTP, OAuth, and keychain tests without real credentials."""
 import base64
+import email.message
 from dataclasses import asdict
 import io
 import json
@@ -11,6 +12,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlencode, urlsplit
+from urllib.response import addinfourl
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import google_drive
@@ -102,6 +104,25 @@ class ApiTest(unittest.TestCase):
         with self.assertRaises(google_drive.DriveError):
             google_drive.request_json(google_drive.API_URL + "files", access_token="bad\r\nheader")
 
+    def test_redirect_does_not_forward_the_token(self):
+        requests = []
+
+        def https_open(handler, request):
+            # A real urllib opener processes this answer; only the network is fake.
+            requests.append(request.full_url)
+            if len(requests) == 1:
+                headers = email.message.Message()
+                headers["Location"] = "https://other.invalid/steal"
+                response = addinfourl(io.BytesIO(b""), headers, request.full_url, 302)
+            else:
+                response = addinfourl(io.BytesIO(b"{}"), email.message.Message(), request.full_url, 200)
+            response.msg = "fixture"
+            return response
+        with patch("urllib.request.HTTPSHandler.https_open", https_open):
+            with self.assertRaisesRegex(google_drive.DriveError, "redirect"):
+                google_drive.request_json(google_drive.API_URL + "files", access_token="fixture-access")
+        self.assertEqual(requests, [google_drive.API_URL + "files"])
+
     def test_provider_checks_folder_and_maps_file(self):
         folder = {"id": "folder123", "name": "Target", "trashed": False,
                   "mimeType": "application/vnd.google-apps.folder"}
@@ -159,8 +180,17 @@ class SetupTest(unittest.TestCase):
             path.write_text(json.dumps({"web": {"client_id": CREDENTIALS.client_id}}))
             with self.assertRaises(google_drive.DriveError):
                 google_drive_setup.read_client(path)
+            # A lone surrogate cannot be sent to Google.
+            path.write_text('{"installed": {"client_id": "%s", "client_secret": "abc\\ud800"}}' % CREDENTIALS.client_id)
+            with self.assertRaises(google_drive.DriveError):
+                google_drive_setup.read_client(path)
 
-    def test_oauth_pkce_state_and_no_callback_reflection(self):
+    def sign_in(self, token_response):
+        """Runs authorize() against a fake browser and callback server.
+
+        Returns the recorded browser URLs, callback replies, token request mock,
+        and stdout. authorize() errors propagate to the caller.
+        """
         opened = []
         replies = []
 
@@ -194,10 +224,14 @@ class SetupTest(unittest.TestCase):
             return True
 
         with patch("google_drive_setup.HTTPServer", FakeServer), patch("google_drive_setup.webbrowser.open", side_effect=browser), \
-                patch("google_drive_setup.request_json", return_value={"refresh_token": "fixture-refresh", "scope": google_drive.SCOPE}) as request, \
+                patch("google_drive_setup.request_json", return_value=token_response) as request, \
                 patch("sys.stdout", new_callable=io.StringIO) as output:
-            credentials = google_drive_setup.authorize(CREDENTIALS.client_id, CREDENTIALS.client_secret)
-        self.assertEqual(credentials, CREDENTIALS)
+            self.credentials = google_drive_setup.authorize(CREDENTIALS.client_id, CREDENTIALS.client_secret)
+        return opened, replies, request, output
+
+    def test_oauth_pkce_state_and_no_callback_reflection(self):
+        opened, replies, request, output = self.sign_in({"refresh_token": "fixture-refresh", "scope": google_drive.SCOPE})
+        self.assertEqual(self.credentials, CREDENTIALS)
         parameters = parse_qs(urlsplit(opened[0]).query)
         token_data = request.call_args.kwargs["data"]
         expected_challenge = base64.urlsafe_b64encode(google_drive_setup.hashlib.sha256(token_data["code_verifier"].encode()).digest()).rstrip(b"=").decode()
@@ -208,6 +242,11 @@ class SetupTest(unittest.TestCase):
         self.assertEqual(len(replies), 2)
         self.assertTrue(all(b"fixture-code" not in reply for reply in replies))
         self.assertNotIn("https://", output.getvalue())
+
+    def test_oauth_rejects_a_broader_scope(self):
+        with self.assertRaisesRegex(google_drive.DriveError, "read-only metadata"):
+            self.sign_in({"refresh_token": "fixture-refresh",
+                          "scope": "https://www.googleapis.com/auth/drive"})
 
     def test_oauth_timeout_is_bounded(self):
         with patch("google_drive_setup.HTTPServer") as server, patch("google_drive_setup.webbrowser.open", return_value=True), \
@@ -222,7 +261,7 @@ class SetupTest(unittest.TestCase):
                 patch("google_drive_setup.save_credentials") as save, patch("google_drive_setup.save_config") as config, \
                 patch("builtins.input", return_value="No"), patch("sys.stdout", new_callable=io.StringIO) as output:
             drive.return_value.account_email.return_value = "flo@example.test"
-            drive.return_value.get_folder.return_value = {"name": "fixture folder"}
+            drive.return_value.get_folder.return_value = {"id": "folder123", "name": "fixture folder"}
             drive.return_value.find_file.return_value = None
             self.assertEqual(google_drive_setup.main(["--client-json", "fixture.json", "--folder-url", "folder123",
                                                "--state-dir", "state", "--name", "Custom.kdbx"]), 1)
@@ -243,7 +282,7 @@ class SetupTest(unittest.TestCase):
                 patch("builtins.input", return_value="yes"), patch("sys.stdout", new_callable=io.StringIO), \
                 patch("sys.stderr", new_callable=io.StringIO) as errors:
             drive.return_value.account_email.return_value = "flo@example.test"
-            drive.return_value.get_folder.return_value = {"name": "fixture folder"}
+            drive.return_value.get_folder.return_value = {"id": "folder456", "name": "fixture folder"}
             drive.return_value.find_file.return_value = None
             result = google_drive_setup.main(["--client-json", "fixture.json", "--folder-url", "folder456",
                                               "--state-dir", "state", "--name", "Passwords.kdbx"])
@@ -270,6 +309,49 @@ class SetupTest(unittest.TestCase):
         result, errors = self.run_confirmed_setup(keychain, failure, save)
         self.assertEqual(result, 1)
         self.assertIn("could not be restored", errors)
+
+    def test_my_drive_root_is_saved_with_its_real_id(self):
+        for folder in ("https://drive.google.com/drive/my-drive", "https://drive.google.com/drive/u/1/my-drive", "root"):
+            with self.subTest(folder=folder), tempfile.TemporaryDirectory() as directory:
+                state = Path(directory)
+                with patch("google_drive_setup.read_client", return_value=(CREDENTIALS.client_id, CREDENTIALS.client_secret)), \
+                        patch("google_drive_setup.authorize", return_value=CREDENTIALS), \
+                        patch("google_drive_setup.load_credentials", side_effect=google_drive.DriveError("missing")), \
+                        patch("google_drive_setup.save_credentials"), \
+                        patch("google_drive.request_json", side_effect=[
+                            {"access_token": "fixture-access"}, {"user": {"emailAddress": "flo@example.test"}},
+                            {"id": "0AMyDriveRoot", "name": "My Drive", "trashed": False,
+                             "mimeType": "application/vnd.google-apps.folder"},
+                            {"files": []}]) as request, \
+                        patch("builtins.input", return_value="yes"), patch("sys.stdout", new_callable=io.StringIO):
+                    self.assertEqual(google_drive_setup.main(["--client-json", "fixture.json", "--folder-url", folder,
+                                                              "--state-dir", str(state), "--name", "Passwords.kdbx"]), 0)
+                self.assertIn("files/root", request.call_args_list[2].args[0])
+                self.assertIn("'0AMyDriveRoot' in parents", parse_qs(urlsplit(request.call_args_list[3].args[0]).query)["q"][0])
+                self.assertEqual(json.loads((state / "upload-check.json").read_text())["folder_id"], "0AMyDriveRoot")
+
+    def test_failed_readback_restores_previous_credentials(self):
+        previous = google_drive.Credentials(CREDENTIALS.client_id, CREDENTIALS.client_secret, "previous-refresh")
+        keychain = [previous]
+
+        def save(credentials):
+            # The keychain took the new entry, but reading it back failed.
+            keychain.append(credentials)
+            if credentials != previous:
+                raise google_drive.DriveError("Could not save Google access in the macOS keychain.")
+        result, errors = self.run_confirmed_setup(keychain, None, save)
+        self.assertEqual(result, 1)
+        self.assertEqual(keychain[-1], previous)
+        self.assertIn("previous Google access was kept", errors)
+
+    def test_cancel_while_saving_restores_previous_credentials(self):
+        previous = google_drive.Credentials(CREDENTIALS.client_id, CREDENTIALS.client_secret, "previous-refresh")
+        keychain = [previous]
+        result, errors = self.run_confirmed_setup(keychain, KeyboardInterrupt)
+        self.assertEqual(result, 1)
+        self.assertEqual(keychain[-1], previous)
+        self.assertIn("cancelled", errors)
+        self.assertIn("previous Google access was kept", errors)
 
     def test_atomic_public_config_has_restricted_permissions(self):
         with tempfile.TemporaryDirectory() as directory:

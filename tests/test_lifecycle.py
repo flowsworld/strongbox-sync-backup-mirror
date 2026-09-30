@@ -84,7 +84,7 @@ class LifecycleTest(StrongboxFixture):
         # No STRONGBOX_* settings: the scripts read config.local.zsh like a real install.
         self.env = {"PATH": "/usr/bin:/bin", "HOME": str(self.home), "TMPDIR": str(self.base),
                     "STRONGBOX_LAUNCHCTL": str(tools / "launchctl"), "STRONGBOX_STOP_SECONDS": "1",
-                    "STRONGBOX_SECURITY": str(tools / "security"),
+                    "STRONGBOX_SECURITY": str(tools / "security"), "STRONGBOX_OSASCRIPT": "/usr/bin/true",
                     "FAKE_LAUNCHD": str(self.launchd), "FAKE_KEYCHAIN": str(self.keychain)}
         self.agents = self.home / "Library/LaunchAgents"
         self.state = self.home / "Library/Application Support/strongbox-sync-backup-mirror"
@@ -161,6 +161,57 @@ class LifecycleTest(StrongboxFixture):
         self.assertEqual(self.loaded(), [LABEL])
         job = plistlib.loads((self.agents / f"{LABEL}.plist").read_bytes())
         self.assertEqual(job["EnvironmentVariables"]["STRONGBOX_NOTIFY"], "0")
+
+    def test_reinstall_whose_stop_times_out_still_cleans_up(self):
+        self.run_script("install.zsh")
+        before = (self.agents / f"{LABEL}.plist").read_bytes()
+        # The old job never stops within the wait time.
+        launchctl = Path(self.env["STRONGBOX_LAUNCHCTL"])
+        launchctl.write_text(launchctl.read_text().replace("    bootout) rm", "    bootout) : rm"))
+        result = self.run_script("install.zsh", expected=1)
+        self.assertIn("still stopping", result.stderr)
+        self.assertEqual((self.agents / f"{LABEL}.plist").read_bytes(), before)
+        self.assertEqual(list(self.base.glob("strongbox*.*")), [])
+
+    def test_config_whose_last_command_fails_still_loads(self):
+        self.write_config('[[ "$(hostname)" == no-such-host ]] && NOTIFY=0\n')
+        self.run_script("install.zsh")
+        self.run_script("sync.zsh")
+        self.assertEqual(self.destination.read_bytes(), b"encrypted backup")
+
+    def test_job_reports_configuration_errors(self):
+        for extra, message in (("NOTIFY='unterminated\n", "config.local.zsh"),
+                               ("NOTIFY=2\n", "NOTIFY must be 0 or 1.")):
+            with self.subTest(extra=extra):
+                self.write_config(extra)
+                result = self.run_script("sync.zsh", expected=1)
+                self.assertIn(message, result.stderr)
+                self.assertIn(message, (self.state / "last-error").read_text())
+                self.assertIn(message, (self.state / "sync.log").read_text())
+
+    def test_setup_wizard_accepts_a_path_dragged_from_finder(self):
+        shutil.copy2(ROOT / "setup-google-drive.sh", self.project / "setup-google-drive.sh")
+        tools = Path(self.env["STRONGBOX_LAUNCHCTL"]).parent
+        (tools / "open").write_text("#!/bin/sh\nexit 0\n")
+        (tools / "open").chmod(0o700)
+        # The Python stand-in passes the version check and records the setup call.
+        python, calls = tools / "python", self.base / "setup-call"
+        python.write_text(f'#!/bin/sh\n[ "$1" = -c ] && exit 0\nprintf "%s\\n" "$@" > "{calls}"\n')
+        python.chmod(0o700)
+        self.write_config(f"PYTHON='{python}'\n")
+        client = self.base / "My Downloads" / "client.json"
+        client.parent.mkdir()
+        client.write_text("{}")
+        # Terminal escapes spaces and adds a trailing space when a file is dragged in.
+        dragged = str(client).replace(" ", "\\ ") + " "
+        answers = ["", "strongbox-check-1", "", "", "", "", dragged,
+                   "https://drive.google.com/drive/folders/folder123"]
+        env = dict(self.env, PATH=f"{tools}:/usr/bin:/bin")
+        result = subprocess.run(["/bin/bash", str(self.project / "setup-google-drive.sh")], env=env,
+                                input="\n".join(answers) + "\n", capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        arguments = calls.read_text().splitlines()
+        self.assertEqual(arguments[arguments.index("--client-json") + 1], str(client))
 
     def test_failed_restore_is_reported(self):
         self.run_script("install.zsh")

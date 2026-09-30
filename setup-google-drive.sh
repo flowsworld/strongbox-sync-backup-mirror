@@ -72,11 +72,11 @@ remember() {
 
 # config NAME prints a value from config.zsh, including config.local.zsh.
 config() {
-  /bin/zsh -c 'source "$1/config.zsh" && print -r -- "${(P)2}"' setup "$PROJECT_DIR" "$1"
+  /bin/zsh -fc 'source "$1/config.zsh" && print -r -- "${(P)2}"' setup "$PROJECT_DIR" "$1"
 }
 
 PROJECT_DIR=$(cd "$(dirname "$0")" && pwd)
-problem=$(/bin/zsh -c 'source "$1/config.zsh" && config_problem' setup "$PROJECT_DIR")
+problem=$(/bin/zsh -fc 'source "$1/config.zsh" && config_problem' setup "$PROJECT_DIR")
 [[ -z "$problem" ]] || fail "$problem"
 STATE_DIR=$(config STATE_DIR)
 PYTHON=$(config PYTHON)
@@ -90,7 +90,7 @@ ENV_FILE="$STATE_DIR/setup.env"
 clear_screen
 printf '\n%s%s  Strongbox: set up the upload check%s\n\n' "$BOLD" "$BLUE" "$RESET"
 say "You work in the browser. This script tells you what to do and stores what you copy back."
-say "Stop at any time with Ctrl-C. A later run offers the values already entered."
+say "Stop at any time with Ctrl-C. A later run offers the project ID and client file already entered."
 pause "Press Enter to start."
 
 stage "Google Cloud project and Drive API"
@@ -128,7 +128,9 @@ stage "Download the OAuth client"
 open_url "https://console.cloud.google.com/auth/clients?project=$GOOGLE_PROJECT_ID"
 step "Create client > Application type: Desktop app. Name: Strongbox Upload Check."
 step "Create the client and download its JSON file. This file contains credentials."
-ask GOOGLE_CLIENT_JSON "Full path to the JSON file, without quotes:"
+ask GOOGLE_CLIENT_JSON "Drag the JSON file here from Finder, or type its full path without quotes:"
+# Terminal escapes spaces and other characters with a backslash when a file is dragged in.
+GOOGLE_CLIENT_JSON=$(printf '%s' "$GOOGLE_CLIENT_JSON" | sed -E 's/\\(.)/\1/g')
 case "$GOOGLE_CLIENT_JSON" in
   \~/*) GOOGLE_CLIENT_JSON="$HOME/${GOOGLE_CLIENT_JSON#\~/}" ;;
 esac

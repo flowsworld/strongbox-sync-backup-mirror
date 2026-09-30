@@ -23,6 +23,7 @@ AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 
 
 def parse_folder(value: str) -> str:
+    """Returns the folder ID, or the alias "root" for My Drive itself."""
     if re.fullmatch(r"[A-Za-z0-9_-]{1,256}", value):
         return validate_id(value)
     try:
@@ -30,8 +31,13 @@ def parse_folder(value: str) -> str:
     except ValueError:
         # For example an unclosed "[" in the host of a mistyped address.
         parsed = urlsplit("")
+    if parsed.scheme != "https" or parsed.netloc != "drive.google.com":
+        raise DriveError("Invalid Drive folder URL or folder ID.")
+    # My Drive has no /folders/ address of its own.
+    if re.fullmatch(r"/drive/(?:u/[0-9]+/)?my-drive/?", parsed.path):
+        return "root"
     match = re.fullmatch(r"/drive/(?:u/[0-9]+/)?folders/([A-Za-z0-9_-]{1,256})/?", parsed.path)
-    if (parsed.scheme != "https" or parsed.netloc != "drive.google.com" or not match):
+    if not match:
         raise DriveError("Invalid Drive folder URL or folder ID.")
     return validate_id(match[1])
 
@@ -184,6 +190,8 @@ def main(argv=None):
         drive = GoogleDrive(credentials)
         email = drive.account_email()
         folder = drive.get_folder(folder_id)
+        # Drive lists files under the real ID, also for the alias "root".
+        folder_id = string_value(folder.get("id"))
         file = drive.find_file(folder_id, args.name)
         print(f"Google account: {display_text(email)}")
         print(f"Drive target folder: {display_text(folder['name'])} ({folder_id})")
@@ -197,19 +205,21 @@ def main(argv=None):
         except DriveError:
             # Missing or unreadable: there is no working access to keep.
             previous = None
-        save_credentials(credentials)
         try:
+            save_credentials(credentials)
             save_config(args.state_dir, folder_id)
-        except DriveError as error:
-            # The old folder configuration must keep its matching credentials.
+        except (DriveError, KeyboardInterrupt) as error:
+            # The old folder configuration must keep its matching credentials,
+            # also when the keychain write only failed its read-back check.
             if previous is None:
                 raise
+            reason = "Setup cancelled." if isinstance(error, KeyboardInterrupt) else str(error)
             try:
                 save_credentials(previous)
             except DriveError:
-                raise DriveError(f"{error} The previous Google access could not be restored "
+                raise DriveError(f"{reason} The previous Google access could not be restored "
                                  "either. Run the setup again.") from None
-            raise DriveError(f"{error} The previous Google access was kept.") from None
+            raise DriveError(f"{reason} The previous Google access was kept.") from None
         print("Upload check set up. The sync job was not installed or started.")
         return 0
     except (EOFError, KeyboardInterrupt):

@@ -36,6 +36,11 @@ class Credentials:
             if not isinstance(value, str) or not value or len(value) > 16384 or any(
                     ord(char) < 32 for char in value):
                 raise DriveError("Invalid Google credentials.")
+            # Requests send the values as UTF-8, which lone surrogates cannot be.
+            try:
+                value.encode()
+            except UnicodeEncodeError:
+                raise DriveError("Invalid Google credentials.") from None
 
 
 def object_value(value: object) -> dict[str, object]:
@@ -154,10 +159,12 @@ class GoogleDrive:
         return email
 
     def get_folder(self, folder_id: str) -> dict[str, object]:
+        """Checks the folder. For the alias "root", the result holds the real ID."""
         folder_id = validate_id(folder_id)
         folder = self._get("files/" + folder_id, {
             "fields": "id,name,mimeType,trashed", "supportsAllDrives": "true"})
-        if (folder.get("id") != folder_id or folder.get("trashed") is not False or
+        validate_id(folder.get("id"))
+        if (folder.get("id") != folder_id and folder_id != "root" or folder.get("trashed") is not False or
                 folder.get("mimeType") != "application/vnd.google-apps.folder"):
             raise DriveError("The Drive target is not an available folder.")
         string_value(folder.get("name"))
