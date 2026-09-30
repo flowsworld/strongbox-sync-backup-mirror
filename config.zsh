@@ -54,6 +54,9 @@ config_problem() {
         print -r -- 'BACKUP_ROOT and PREFERENCES must be absolute paths.'
     elif [[ "$STATE_DIR" != /* ]]; then
         print -r -- 'STATE_DIR must be an absolute path.'
+    elif [[ "$PYTHON" != /* ]]; then
+        # Only the form: sync.zsh checks the version when the upload check runs.
+        print -r -- 'PYTHON must be an absolute path.'
     elif folder_contains "$STATE_DIR" "$TARGET_DIR" || folder_contains "$TARGET_DIR" "$STATE_DIR"; then
         # Keeps the mirror out of the folder that uninstall.zsh --purge deletes.
         print -r -- 'STATE_DIR and TARGET_DIR must not contain each other.'

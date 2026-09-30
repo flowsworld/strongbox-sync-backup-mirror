@@ -18,7 +18,8 @@ jobs:
           python-version: '3.10'
       - name: Shell syntax
         run: |
-          /bin/zsh -n sync.zsh install.zsh uninstall.zsh update.zsh launchagent.zsh config.zsh config.local.example.zsh strongbox-source.zsh
+          # zsh -n treats every file after the first as a script argument.
+          for script in *.zsh; do /bin/zsh -n "$script"; done
           /bin/bash -n setup-google-drive.sh
       - name: Isolated sync and API tests
         run: python3 -m unittest discover -s tests -v

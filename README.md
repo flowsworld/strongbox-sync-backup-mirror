@@ -284,7 +284,8 @@ counts only the time between successful checks that found a difference, at
 most 15 minutes per interval. API errors pause the count; new local content or
 a new target folder resets it. An overdue upload or a new check error notifies
 if `NOTIFY=1`. Repeats of the same message stay silent. The check writes status
-changes to `sync.log`.
+changes to `sync.log`. If the log entry or the notification fails, the next run
+with the same result tries it again.
 
 If `cloud-status.json` is corrupt or unreadable, the next run reports this once
 with an `error` status and a notification, then replaces the file. The run

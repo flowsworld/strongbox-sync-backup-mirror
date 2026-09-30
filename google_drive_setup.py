@@ -16,8 +16,8 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 import webbrowser
 
 from google_drive import (Credentials, DriveError, GoogleDrive, SCOPE, TOKEN_URL,
-                         object_value, request_json, save_credentials,
-                         string_value, validate_id)
+                         load_credentials, object_value, request_json,
+                         save_credentials, string_value, validate_id)
 
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 
@@ -25,7 +25,11 @@ AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 def parse_folder(value: str) -> str:
     if re.fullmatch(r"[A-Za-z0-9_-]{1,256}", value):
         return validate_id(value)
-    parsed = urlsplit(value)
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        # For example an unclosed "[" in the host of a mistyped address.
+        parsed = urlsplit("")
     match = re.fullmatch(r"/drive/(?:u/[0-9]+/)?folders/([A-Za-z0-9_-]{1,256})/?", parsed.path)
     if (parsed.scheme != "https" or parsed.netloc != "drive.google.com" or not match):
         raise DriveError("Invalid Drive folder URL or folder ID.")
@@ -188,8 +192,24 @@ def main(argv=None):
         if confirmation.strip().lower() != "yes":
             print("Cancelled. Access and configuration were not saved.")
             return 1
+        try:
+            previous = load_credentials()
+        except DriveError:
+            # Missing or unreadable: there is no working access to keep.
+            previous = None
         save_credentials(credentials)
-        save_config(args.state_dir, folder_id)
+        try:
+            save_config(args.state_dir, folder_id)
+        except DriveError as error:
+            # The old folder configuration must keep its matching credentials.
+            if previous is None:
+                raise
+            try:
+                save_credentials(previous)
+            except DriveError:
+                raise DriveError(f"{error} The previous Google access could not be restored "
+                                 "either. Run the setup again.") from None
+            raise DriveError(f"{error} The previous Google access was kept.") from None
         print("Upload check set up. The sync job was not installed or started.")
         return 0
     except (EOFError, KeyboardInterrupt):
