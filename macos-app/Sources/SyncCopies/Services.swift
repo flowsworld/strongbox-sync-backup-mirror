@@ -118,7 +118,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         // Older SDKs do not mark UNNotificationSettings as Sendable. Extract
         // the value inside Apple's callback instead of crossing actors with it.
         await withCheckedContinuation { continuation in
-            center.getNotificationSettings { settings in
+            center.getNotificationSettings { @Sendable settings in
                 continuation.resume(returning: settings.authorizationStatus)
             }
         }
