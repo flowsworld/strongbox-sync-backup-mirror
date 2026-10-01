@@ -311,7 +311,20 @@ entry or notification of the check also exits with code 1. To see the
 full state, look at the exit code, `last-error`, and `cloud-status.json`
 together.
 
-Each API request times out after 20 seconds. A locked keychain or denied
+Before each API attempt, the check first asks macOS whether an IPv4 or IPv6
+network route is available, then probes DNS, TCP and verified TLS at the Google
+endpoint for that request with a credential-free HTTPS HEAD request through the
+same configured proxy as the API. Any HTTP response confirms reachability. It polls every two seconds for up to 30 seconds to
+allow the network to settle after wake. Individual route checks and HTTPS probes
+have three-second timeouts; OS DNS resolution can take longer. If readiness
+fails, it reports either a missing network or an unreachable Google endpoint
+without sending an API request.
+
+Each API request times out after 20 seconds. Connection failures, HTTP 429 and
+HTTP 5xx responses get at most three retries, after 2, 4 and 8 seconds. Each retry
+checks network and Google readiness again. Authentication, permissions,
+redirects and malformed responses are not retried. Only the final failure
+reaches the status file and notification. A locked keychain or denied
 keychain access is reported as a cloud error. Running the setup in Terminal
 does not prove that the background job can access the keychain. If you revoke
 the access, run the setup again. To turn the check off, delete
