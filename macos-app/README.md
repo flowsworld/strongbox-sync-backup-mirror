@@ -69,6 +69,9 @@ vergleicht Quelle und Ziel. Unveränderte Inhalte werden nicht erneut geschriebe
 Geänderte Inhalte schreibt er mit Dateimodus `0600` in eine temporäre Datei im
 Zielordner. Nach erneutem Prüfen der Quelle und des bisherigen Ziels ersetzt er
 die Zieldatei atomar. Fehler vor dem Ersetzen lassen die vorhandene Kopie stehen.
+Ein abgebrochener Versuch kann eine temporäre Datei mit Modus `0600` im
+Zielordner hinterlassen. Die App löscht solche Dateien nicht automatisch,
+damit sie keine inzwischen von einem anderen Prozess ersetzte Datei entfernt.
 Die App speichert keine Passwörter und lädt keine Dateien in eine Cloud hoch.
 
 ## Tests

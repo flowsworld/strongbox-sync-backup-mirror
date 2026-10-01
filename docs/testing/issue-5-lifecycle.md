@@ -36,20 +36,36 @@ Python-Tests des bestehenden Helfers. Die nativen Tests liefen als
 Entwicklungs-Testprozess, ohne Signierung als Sandbox-App. Die Sandbox-Freigaben
 sind durch diesen Lauf nicht erneut belegt.
 
+Die CI für Commit `d963b11` bestand anschließend auch auf macOS 15.7.9,
+Build 24G830, mit Xcode 16.4. Alle 30 nativen Tests und beide Python-Jobs
+bestanden. Für dieses ältere SDK wurden die Benachrichtigungszugriffe auf
+Callback-APIs umgestellt. Nur Statuswerte und Ergebnisse wechseln den Actor;
+SDK-Referenzobjekte bleiben am Aufrufort.
+
 Der Release-Build mit Xcode 27.0 und Swift 6.4 sowie die anschließende lokale
 Ad-hoc-Signierung und Signaturprüfung bestanden ebenfalls. Das Bundle wurde
 nicht gestartet. Zwei unabhängige interne Reviews prüften Standards und
 Issue-Anforderungen. Beide fanden keine weiteren Korrekturen. Die fehlenden
 manuellen Abnahmeschritte wurden im Anforderungsreview ausdrücklich bestätigt.
 
-Für die Bereinigung muss eine temporäre Datei den reservierten UUID-Dateinamen,
-Modus `0600`, den aktuellen Besitzer, genau einen Hardlink und die eigene
-erweiterte Dateimarkierung der App besitzen. Fertige Kopien tragen diese Markierung
-nicht. Eine gleich benannte Datei ohne Markierung bleibt erhalten. Unterstützt
-das Dateisystem keine erweiterten Attribute, kopiert die App weiterhin, lässt
-aber abgebrochene temporäre Dateien liegen. Auch ein Abbruch zwischen dem
-Entfernen der Markierung und dem atomaren Ersetzen kann eine solche Datei
-hinterlassen. Die Bereinigung entfernt sie vorsichtshalber nicht.
+Die App löscht keine temporären Dateien automatisch. Eine abgebrochene Kopie
+kann eine Datei mit Namen `.synccopies-<UUID>.tmp` und Modus `0600` im Zielordner
+hinterlassen. Sie enthält ausschließlich die künstlichen beziehungsweise
+verschlüsselten Backup-Bytes, die bereits für diese Kopie gelesen wurden.
+Ein erfolgreicher atomarer Austausch verbraucht die aktuelle temporäre Datei.
+Verbliebene Dateien können im eigenen Zielordner manuell entfernt werden.
+
+Der einmalige externe Codex-Review von Commit `d963b11` fand ein Rennen zwischen
+Eigentumsprüfung und Löschen. Ein Sync-Client muss die App-Sperre nicht beachten
+und kann den geprüften Dateipfad zwischen beiden Schritten ersetzen. Die
+Korrektur entfernt automatische Bereinigung und das Löschen im Fehlerpfad.
+Dadurch entfällt diese Möglichkeit, eine fremde Datei versehentlich zu löschen.
+Der Review wird gemäß der vereinbarten Einmal-Regel nicht erneut angefordert.
+Die fünf gezielten Kopier- und Parallelitätstests der Korrektur bestanden lokal.
+Ein zusätzlicher Test ändert eine künstliche Quelle nach dem Erstellen der
+temporären Datei. Die Kopie muss mit Fehler abbrechen, das bisherige Ziel
+erhalten und die temporären Backup-Bytes mit Modus `0600` liegen lassen.
+Die Suite umfasst damit insgesamt 31 native Tests.
 
 ## Manuelle Nachweise und offene Prüfungen
 
