@@ -49,7 +49,7 @@ private func temporaryDirectory() throws -> URL {
 @Test func schedulerReleasesResourcesWhenOwnerDisappears() async throws {
     let center = NotificationCenter()
     var scheduler: AppScheduler? = AppScheduler(interval: 0.03, wakeCenter: center)
-    weak let released = scheduler
+    weak var released = scheduler
     var count = 0
     scheduler?.start { count += 1 }
     scheduler = nil
