@@ -36,6 +36,12 @@ Python-Tests des bestehenden Helfers. Die nativen Tests liefen als
 Entwicklungs-Testprozess, ohne Signierung als Sandbox-App. Die Sandbox-Freigaben
 sind durch diesen Lauf nicht erneut belegt.
 
+Der Release-Build mit Xcode 27.0 und Swift 6.4 sowie die anschließende lokale
+Ad-hoc-Signierung und Signaturprüfung bestanden ebenfalls. Das Bundle wurde
+nicht gestartet. Zwei unabhängige interne Reviews prüften Standards und
+Issue-Anforderungen. Beide fanden keine weiteren Korrekturen. Die fehlenden
+manuellen Abnahmeschritte wurden im Anforderungsreview ausdrücklich bestätigt.
+
 Für die Bereinigung muss eine temporäre Datei den reservierten UUID-Dateinamen,
 Modus `0600`, den aktuellen Besitzer, genau einen Hardlink und die eigene
 erweiterte Dateimarkierung der App besitzen. Fertige Kopien tragen diese Markierung
