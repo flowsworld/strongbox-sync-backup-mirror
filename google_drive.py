@@ -5,6 +5,7 @@ from http.client import HTTPException
 import json
 import re
 import subprocess
+import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -101,11 +102,61 @@ class _NoRedirect(HTTPRedirectHandler):
         raise DriveError("Unexpected redirect from the Google API.")
 
 
+def network_available() -> bool:
+    """Ask macOS for an available IPv4 or IPv6 route, including VPN routes."""
+    try:
+        result = subprocess.run(["/usr/sbin/scutil", "--nwi"], capture_output=True,
+                                text=True, timeout=3)
+    except (OSError, subprocess.TimeoutExpired):
+        raise DriveError("Could not check macOS network availability.") from None
+    if result.returncode:
+        raise DriveError("Could not check macOS network availability.")
+    return bool(re.search(r"REACH : flags 0x[0-9a-fA-F]+ \(Reachable\)", result.stdout))
+
+
+def google_reachable(host: str, timeout: float) -> bool:
+    """Check DNS, TCP and verified TLS at the actual endpoint without credentials."""
+    request = Request("https://" + host + "/", method="HEAD")
+    try:
+        # Use urllib here too, so the probe follows the API's configured proxy.
+        with build_opener(_NoRedirect()).open(request, timeout=timeout):
+            return True
+    except HTTPError as error:
+        # An HTTP error still proves that DNS, TCP and TLS reached the endpoint.
+        error.close()
+        return True
+    except (URLError, OSError, HTTPException, DriveError):
+        return False
+
+
+def wait_until_ready(host: str) -> None:
+    """Allow wake-time network setup to settle before sending an API request."""
+    deadline = time.monotonic() + 30
+    message = "No network available. Check the network connection."
+    while True:
+        if network_available():
+            remaining = deadline - time.monotonic()
+            if remaining > 0 and google_reachable(host, min(3, remaining)):
+                return
+            message = "Google not reachable. Check the network connection."
+        else:
+            message = "No network available. Check the network connection."
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise DriveError(message)
+        time.sleep(min(2, remaining))
+
+
 def request_json(url: str, *, data: dict[str, str] | None = None,
                  access_token: str | None = None) -> dict[str, object]:
-    """Only use fixed Google endpoints; never forward bearer tokens."""
+    """Only use fixed Google endpoints; never forward bearer tokens.
+
+    Readiness gates each attempt. Transient API failures get three retries;
+    authentication, permissions, redirects and malformed responses do not.
+    """
     if not (url == TOKEN_URL or url.startswith(API_URL)):
         raise DriveError("Disallowed Google API endpoint.")
+    host = "oauth2.googleapis.com" if url == TOKEN_URL else "www.googleapis.com"
     headers = {"Accept": "application/json"}
     if access_token is not None:
         access_token = string_value(access_token)
@@ -116,28 +167,36 @@ def request_json(url: str, *, data: dict[str, str] | None = None,
         headers["Content-Type"] = "application/x-www-form-urlencoded"
     request = Request(url, data=urlencode(data).encode() if data is not None else None,
                       headers=headers)
-    try:
-        with build_opener(_NoRedirect()).open(request, timeout=20) as response:
-            body = response.read(1048577)
-            if len(body) > 1048576:
-                raise DriveError("Drive API response is too large.")
-        return object_value(json.loads(body))
-    except HTTPError as error:
-        message = {
-            400: "Google rejected the request. Check the OAuth setup and folder.",
-            401: "Google sign-in expired. Set up the upload check again.",
-            403: "Google denied access. Check the permission and the Drive API.",
-            404: "Drive file or folder not found.",
-            429: "Drive API temporarily overloaded.",
-        }.get(error.code, "Drive API temporarily unavailable.")
-        if error.code == 400 and url == TOKEN_URL:
-            message = "Google sign-in rejected, expired, or revoked. Set up the upload check again."
-        error.close()
-        raise DriveError(message) from None
-    except (URLError, TimeoutError, OSError, HTTPException):
-        raise DriveError("Drive API not reachable. Check the network connection.") from None
-    except (ValueError, UnicodeError):
-        raise DriveError("Invalid response from the Drive API.") from None
+    for attempt in range(4):
+        wait_until_ready(host)
+        try:
+            with build_opener(_NoRedirect()).open(request, timeout=20) as response:
+                body = response.read(1048577)
+                if len(body) > 1048576:
+                    raise DriveError("Drive API response is too large.")
+            return object_value(json.loads(body))
+        except HTTPError as error:
+            retryable = error.code == 429 or 500 <= error.code <= 599
+            message = {
+                400: "Google rejected the request. Check the OAuth setup and folder.",
+                401: "Google sign-in expired. Set up the upload check again.",
+                403: "Google denied access. Check the permission and the Drive API.",
+                404: "Drive file or folder not found.",
+                429: "Drive API temporarily overloaded.",
+            }.get(error.code, "Drive API temporarily unavailable.")
+            if error.code == 400 and url == TOKEN_URL:
+                message = "Google sign-in rejected, expired, or revoked. Set up the upload check again."
+            error.close()
+            if not retryable:
+                raise DriveError(message) from None
+        except (URLError, TimeoutError, OSError, HTTPException):
+            message = "Drive API not reachable. Check the network connection."
+        except (ValueError, UnicodeError):
+            raise DriveError("Invalid response from the Drive API.") from None
+        if attempt == 3:
+            raise DriveError(message) from None
+        time.sleep(2 ** (attempt + 1))
+    raise AssertionError("Unreachable retry state")
 
 
 class GoogleDrive:

@@ -27,6 +27,47 @@ FILE = {"id": "file123", "name": "Passwords.kdbx", "parents": ["folder123"],
 
 
 class ApiTest(unittest.TestCase):
+    def setUp(self):
+        # HTTP tests never inspect the host Mac or contact Google.
+        self.ready = patch("google_drive.wait_until_ready").start()
+        self.sleep = patch("google_drive.time.sleep").start()
+        self.addCleanup(patch.stopall)
+
+    def test_transient_failures_back_off_then_recover(self):
+        failures = [URLError("secret"),
+                    HTTPError("private", 429, "secret", {}, io.BytesIO()),
+                    HTTPError("private", 503, "secret", {}, io.BytesIO())]
+        events = []
+        self.ready.side_effect = lambda host: events.append("ready")
+        self.sleep.side_effect = lambda seconds: events.append(seconds)
+        with patch("google_drive.build_opener") as opener:
+            opener.return_value.open.side_effect = [*failures, io.BytesIO(b'{"files":[]}')]
+            self.assertEqual(google_drive.request_json(google_drive.API_URL + "files"), {"files": []})
+        self.assertEqual(events, ["ready", 2, "ready", 4, "ready", 8, "ready"])
+        self.assertEqual(opener.return_value.open.call_count, 4)
+
+    def test_permanent_errors_and_invalid_json_are_not_retried(self):
+        for code in (400, 401, 403, 404):
+            with self.subTest(code=code), patch("google_drive.build_opener") as opener:
+                opener.return_value.open.side_effect = HTTPError("private", code, "secret", {}, io.BytesIO())
+                with self.assertRaises(google_drive.DriveError):
+                    google_drive.request_json(google_drive.API_URL + "files")
+                self.assertEqual(opener.return_value.open.call_count, 1)
+        with patch("google_drive.build_opener") as opener:
+            opener.return_value.open.return_value = io.BytesIO(b'not json')
+            with self.assertRaisesRegex(google_drive.DriveError, "Invalid response"):
+                google_drive.request_json(google_drive.API_URL + "files")
+            self.assertEqual(opener.return_value.open.call_count, 1)
+        self.sleep.assert_not_called()
+
+    def test_unready_network_blocks_api_and_backoff(self):
+        self.ready.side_effect = google_drive.DriveError("No network available.")
+        with patch("google_drive.build_opener") as opener:
+            with self.assertRaisesRegex(google_drive.DriveError, "No network"):
+                google_drive.request_json(google_drive.TOKEN_URL)
+            opener.assert_not_called()
+        self.sleep.assert_not_called()
+
     def test_refresh_once_and_find_across_empty_page(self):
         with patch("google_drive.request_json", side_effect=[
                 {"access_token": "fixture-access"}, {"files": [], "nextPageToken": "next"},
@@ -171,6 +212,65 @@ class ApiTest(unittest.TestCase):
         with patch("google_drive.subprocess.run", return_value=subprocess.CompletedProcess([], 44, "", "sensitive")):
             with self.assertRaisesRegex(google_drive.DriveError, "keychain"):
                 google_drive.load_credentials()
+
+
+class ReadinessTest(unittest.TestCase):
+    def test_network_route_in_either_address_family(self):
+        for output, expected in [
+                ("REACH : flags 0x00000000 (Not Reachable)", False),
+                ("REACH : flags 0x00000002 (Reachable)", True),
+                ("REACH : flags 0x00000000 (Not Reachable)\nREACH : flags 0x00000002 (Reachable)", True)]:
+            with self.subTest(output=output), patch("google_drive.subprocess.run", return_value=
+                    subprocess.CompletedProcess([], 0, output, "")):
+                self.assertEqual(google_drive.network_available(), expected)
+        with patch("google_drive.subprocess.run", side_effect=subprocess.TimeoutExpired("scutil", 3)):
+            with self.assertRaisesRegex(google_drive.DriveError, "macOS network"):
+                google_drive.network_available()
+
+    def test_wake_waits_for_network_then_google(self):
+        events = []
+        def network():
+            events.append("network")
+            return len(events) > 1
+        def google(host, timeout):
+            events.append("google")
+            return events.count("google") == 2
+        with patch("google_drive.network_available", side_effect=network), \
+                patch("google_drive.google_reachable", side_effect=google), \
+                patch("google_drive.time.monotonic", return_value=0), \
+                patch("google_drive.time.sleep") as sleep:
+            google_drive.wait_until_ready("www.googleapis.com")
+        self.assertEqual(events, ["network", "network", "google", "network", "google"])
+        self.assertEqual([c.args[0] for c in sleep.call_args_list], [2, 2])
+
+    def test_readiness_deadline_distinguishes_network_and_google(self):
+        for available, message in [(False, "No network"), (True, "Google not reachable")]:
+            with self.subTest(available=available), \
+                    patch("google_drive.network_available", return_value=available), \
+                    patch("google_drive.google_reachable", return_value=False) as google, \
+                    patch("google_drive.time.monotonic", side_effect=[0, 30, 30]), \
+                    patch("google_drive.time.sleep") as sleep:
+                with self.assertRaisesRegex(google_drive.DriveError, message):
+                    google_drive.wait_until_ready("www.googleapis.com")
+                google.assert_not_called()
+                sleep.assert_not_called()
+
+    def test_google_probe_uses_api_transport_without_credentials(self):
+        with patch("google_drive.build_opener") as opener:
+            self.assertTrue(google_drive.google_reachable("www.googleapis.com", 3))
+            request = opener.return_value.open.call_args.args[0]
+            self.assertEqual(request.full_url, "https://www.googleapis.com/")
+            self.assertEqual(request.get_method(), "HEAD")
+            self.assertEqual(request.headers, {})
+            self.assertIsNone(request.data)
+            self.assertEqual(opener.return_value.open.call_args.kwargs["timeout"], 3)
+        for error, expected in [
+                (HTTPError("private", 404, "private", {}, io.BytesIO()), True),
+                (URLError("private"), False),
+                (google_drive.DriveError("Unexpected redirect"), False)]:
+            with self.subTest(expected=expected), patch("google_drive.build_opener") as opener:
+                opener.return_value.open.side_effect = error
+                self.assertEqual(google_drive.google_reachable("www.googleapis.com", 3), expected)
 
 
 class SetupTest(unittest.TestCase):
