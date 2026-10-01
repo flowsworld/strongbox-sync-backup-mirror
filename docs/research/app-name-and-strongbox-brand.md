@@ -1,6 +1,6 @@
 # App-Name und Verwendung von Strongbox
 
-Stand: 1. Oktober 2026. Entscheidungsgrundlage für [Issue #8](https://github.com/flowsworld/strongbox-sync-backup-mirror/issues/8). Der endgültige Name ist offen und wird von Flo gewählt. Diese Recherche ändert keine Produkttexte und erteilt keine Markenfreigabe.
+Stand: 1. Oktober 2026. Entscheidungsgrundlage für [Issue #8](https://github.com/flowsworld/strongbox-sync-backup-mirror/issues/8). Flo hat am 1. Oktober 2026 "DIESIS Backup-Kopie" / "DIESIS Backup Copy" für die Verwendung nach der Rechteklärung gewählt. Diese Recherche ändert keine Produkttexte und erteilt keine Markenfreigabe.
 
 ## Produkt und Ergebnis
 
@@ -29,7 +29,9 @@ Für regulären Direktvertrieb mit Gatekeeper verlangt Apples Notarisierungsabla
 
 Store-Name und Untertitel sind lokalisierbar und auf je 30 Zeichen begrenzt. Die Kompatibilität mit Strongbox gehört deshalb, vorbehaltlich der Freigabe, in die Beschreibung und Review-Notizen, nicht als Untertitel-Ausweichlösung. Verfügbarkeit und Rechte der unten genannten eigenen Namen sind noch ungeprüft. [App Store Connect: App information](https://developer.apple.com/help/app-store-connect/reference/app-information/app-information/)
 
-## Kandidaten für Flos Auswahl
+## Gewählter Name und geprüfte Alternativen
+
+Flo hat "DIESIS Backup-Kopie" auf Deutsch und "DIESIS Backup Copy" auf Englisch gewählt. Die folgenden Alternativen dokumentieren die Entscheidungsgrundlage. Die Auswahl ersetzt keine Rechteklärung für die Strongbox-Kompatibilitätsbeschreibung.
 
 Die Zeichenanzahlen enthalten Leerzeichen und Satzzeichen. Alle Vorschläge bezeichnen eine Kopie. Keiner verspricht bidirektionale Synchronisation. Die funktionale Erklärung bleibt erforderlich, insbesondere die Beschränkung auf das neueste Backup.
 
@@ -40,7 +42,7 @@ Die Zeichenanzahlen enthalten Leerzeichen und Satzzeichen. Alle Vorschläge beze
 | Datenbank-Kopie | Database Copy | 15 / 13 | Kurz; braucht die Erklärung, dass die Quelle ein verschlüsseltes Backup ist. |
 | Backup-Kopie für Strongbox | Backup Copy for Strongbox | 26 / 25 | Beschreibt den Zweck als Drittanbieter-Helfer. Nur als bedingter Kandidat nach ausdrücklicher Freigabe und eigener Store-Prüfung. |
 
-Flos bisherige Vorschläge haben 35 Zeichen bei "Sync Backupdatei-Mirror (Strongbox)" und 33 bei "Strongbox Sync Backupdatei-Mirror". Beide überschreiten das Store-Limit. "Strongbox" am Anfang kann Herstellerzugehörigkeit nahelegen. "Sync" und "Mirror" lassen außerdem offen, ob die App Dateien zurückschreibt. Das sind Gründe für die kürzeren Kopie-Kandidaten, keine bereits getroffene Namensentscheidung.
+Flos bisherige Vorschläge haben 35 Zeichen bei "Sync Backupdatei-Mirror (Strongbox)" und 33 bei "Strongbox Sync Backupdatei-Mirror". Beide überschreiten das Store-Limit. "Strongbox" am Anfang kann Herstellerzugehörigkeit nahelegen. "Sync" und "Mirror" lassen außerdem offen, ob die App Dateien zurückschreibt. Das sind Gründe für die kürzeren Kopie-Kandidaten, keine Markenfreigabe.
 
 Als Erklärungstext zur späteren Prüfung, noch nicht als angewandte Produktkopie:
 
@@ -65,9 +67,9 @@ Adressvorschlag: `info@phoebecode.com`, die auf About veröffentlichte Geschäft
 >
 > I am Florian Gratzl, founder of DIESIS Media. I am developing an independent macOS menu bar utility that copies the latest local encrypted backup of selected Strongbox Sync databases to user-selected folders. It reads local metadata and backup files with user-granted folder access. It does not decrypt databases, write back to Strongbox, or access your sync service directly.
 >
-> I intend to offer it for a one-time purchase of approximately EUR 5, potentially through the Mac App Store and/or direct distribution. The final name is undecided. Options include an independent name such as "DIESIS Backup Copy", with a compatibility statement in the description, or "Backup Copy for Strongbox" and its German equivalent "Backup-Kopie für Strongbox". I would not use your logo or imply that this is an official Strongbox product.
+> I intend to offer it for a one-time purchase of approximately EUR 5, potentially through the Mac App Store and/or direct distribution. I have selected the independent name "DIESIS Backup Copy", localised as "DIESIS Backup-Kopie" in German, with a Strongbox compatibility statement in the description. The product name itself will not contain Strongbox. I would not use your logo or imply that this is an official Strongbox product.
 >
-> Could you confirm whether you permit these uses of the Strongbox name in the app title, in-app text, documentation and store/website descriptions? Please specify any required attribution, disclaimer, naming restrictions, distribution-channel conditions or approval process. Can you also confirm whether you permit this commercial read-only use of local metadata and backups, and whether there is a supported export or integration interface we should use instead?
+> Could you confirm whether you permit use of the Strongbox name in compatibility statements in the in-app text, documentation and store/website descriptions? Please specify any required attribution, disclaimer, naming restrictions, distribution-channel conditions or approval process. Can you also confirm whether you permit this commercial read-only use of local metadata and backups, and whether there is a supported export or integration interface we should use instead?
 >
 > Your About page lists Phoebe Code Limited, while the announcement about joining Applause indicates a change in stewardship. Please forward this request to the current rights holder or authorised contact and identify who can grant the permission. Written confirmation that I can retain for App Review would be helpful.
 >
@@ -79,8 +81,9 @@ Adressvorschlag: `info@phoebecode.com`, die auf About veröffentlichte Geschäft
 
 - [ ] Flo sendet die Anfrage, wenn er die Rechteklärung starten möchte. Keine externe Kontaktaufnahme durch diesen Rechercheauftrag.
 - [ ] Antwort mit Datum, zuständiger Stelle, erlaubten DE-/EN-Formulierungen, Kanälen und Bedingungen hier festhalten. Keine Pflichtattribution erfinden; geforderte Formulierung exakt aufnehmen.
-- [ ] Flo wählt den endgültigen deutschen und englischen Namen. Verfügbarkeit und mögliche Rechtekonflikte des gewählten Namens prüfen.
+- [x] Flo hat am 1. Oktober 2026 "DIESIS Backup-Kopie" / "DIESIS Backup Copy" gewählt, für die Verwendung nach der Rechteklärung.
+- [ ] Verfügbarkeit und mögliche Rechtekonflikte des gewählten Namens prüfen.
 - [ ] Vertriebskanal festlegen und die Strongbox-Abhängigkeit für App Review klären. Händlerfreigabe und Apple-Zulassung getrennt nachweisen.
-- [ ] Entscheidung hier dokumentieren: Name DE **offen**, Name EN **offen**, Freigabenachweis **offen**, Attribution **offen**, Vertriebskanal **offen**. Bundle-ID-Vorschlag **unverändert `cloud.diesis.sync-copies`**, noch keine Identitätsänderung beschlossen.
-- [ ] Erst nach der Auswahl Bundle-Anzeigenamen, Menü, Mitteilungen, Dokumentation und Store-/Website-Material konsistent lokalisieren. Funktion und Unabhängigkeit korrekt beschreiben; keine noch ausstehende Google-Drive-Prüfung versprechen.
-- [ ] Signierungsübergang und vorhandene Bookmarks gesondert verifizieren. Issue #8 bleibt bis zur Auswahl, dokumentierten Rechteklärung und Umsetzung offen.
+- [ ] Entscheidung hier dokumentieren: Name DE **DIESIS Backup-Kopie**, Name EN **DIESIS Backup Copy**, Freigabenachweis **offen**, Attribution **offen**, Vertriebskanal **offen**. Bundle-ID-Vorschlag **unverändert `cloud.diesis.sync-copies`**, noch keine Identitätsänderung beschlossen.
+- [ ] Erst nach der Rechteklärung Bundle-Anzeigenamen, Menü, Mitteilungen, Dokumentation und Store-/Website-Material konsistent lokalisieren. Funktion und Unabhängigkeit korrekt beschreiben; keine noch ausstehende Google-Drive-Prüfung versprechen.
+- [ ] Signierungsübergang und vorhandene Bookmarks gesondert verifizieren. Issue #8 bleibt bis zur dokumentierten Rechteklärung und Umsetzung offen.
