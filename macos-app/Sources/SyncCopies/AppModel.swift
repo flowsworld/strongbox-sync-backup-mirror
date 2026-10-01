@@ -94,7 +94,12 @@ final class AppModel: ObservableObject {
     @Published var page: SettingsPage = .databases
     @Published var expandedDatabases: Set<UUID> = []
 
-    let notifications = NotificationService()
+    private let environment: AppEnvironment?
+    private var notifications: NotificationService? { environment?.notifications }
+    private(set) var startupConflict = false
+    private(set) var isStopping = false
+    private var instanceLock: InstanceLock?
+    private var scanTask: Task<Void, Never>?
     var onOpenSettings: (() -> Void)?
     private let preferencesURL: URL
     private var persistenceFailed = false
@@ -102,16 +107,15 @@ final class AppModel: ObservableObject {
     private var pendingNotifications: [(UUID, WritableKeyPath<NotificationPreferences, Bool>, String, String, String?)] = []
     private var scanAgain = false
     private var generation = 0
-    private var sourceScope: ScopedFolder?
+    private var sourceScope: FolderAccess?
     private var monitoredPaths: Set<String> = []
     private var monitor: FileMonitor?
-    private var timer: Timer?
-    private var wakeObserver: NSObjectProtocol?
     private var notificationAttemptRunning = false
 
-    init(demo: Bool = false) {
+    init(demo: Bool = false, environment suppliedEnvironment: AppEnvironment? = nil) {
         isDemo = demo
-        preferencesURL = FileManager.default.homeDirectoryForCurrentUser
+        environment = demo ? nil : (suppliedEnvironment ?? AppEnvironment.live())
+        preferencesURL = environment?.preferencesURL ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/SyncCopies/preferences.json")
         if demo {
             let privateDB = Database(id: UUID(), filename: "Privat.kdbx", displayName: "Privat")
@@ -127,6 +131,15 @@ final class AppModel: ObservableObject {
             return
         }
         do {
+            try FileManager.default.createDirectory(at: preferencesURL.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            instanceLock = try InstanceLock(url: preferencesURL.deletingLastPathComponent().appendingPathComponent(".instance.lock"))
+        } catch {
+            startupConflict = (error as? InstanceLockError) == .alreadyRunning
+            loadFailed = true
+            problem = error.localizedDescription
+            return
+        }
+        do {
             if FileManager.default.fileExists(atPath: preferencesURL.path) {
                 preferences = try JSONDecoder().decode(Preferences.self, from: Data(contentsOf: preferencesURL))
             }
@@ -139,21 +152,16 @@ final class AppModel: ObservableObject {
             self?.monitoredPaths = []
             self?.refresh()
         }
-        notifications.onSelectDatabase = { [weak self] id in
+        notifications?.onSelectDatabase = { [weak self] id in
             self?.page = .databases
             if let uuid = UUID(uuidString: id) { self?.expandedDatabases.insert(uuid) }
             self?.onOpenSettings?()
         }
-        loginEnabled = LoginService.enabled
-        loginNeedsApproval = LoginService.requiresApproval
-        timer = Timer.scheduledTimer(withTimeInterval: 15 * 60, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
-        }
-        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
-        }
+        guard let environment else { return }
+        let login = environment.loginStatus()
+        loginEnabled = login.enabled
+        loginNeedsApproval = login.needsApproval
+        environment.scheduler.start { [weak self] in self?.refresh() }
         Task { await updateNotificationStatus() }
         refresh()
     }
@@ -167,12 +175,13 @@ final class AppModel: ObservableObject {
     }
     func label(for bookmark: Data?) -> String {
         guard let bookmark else { return "Kein Ordner ausgewählt" }
-        do { return try ScopedFolder(bookmark: bookmark).url.lastPathComponent }
+        guard let environment else { return "Zugriff erneut erlauben" }
+        do { return try environment.resolveFolder(bookmark).url.lastPathComponent }
         catch { return "Zugriff erneut erlauben" }
     }
 
     func chooseSource() {
-        guard !isDemo, !isChecking else { return }
+        guard !isDemo, !isChecking, !isStopping, !loadFailed else { return }
         do {
             let home = FileManager.default.homeDirectoryForCurrentUser
             // passwd provides the actual home rather than the app's sandbox home.
@@ -193,7 +202,7 @@ final class AppModel: ObservableObject {
     }
 
     func chooseTarget(for database: Database? = nil) {
-        guard !isDemo, !isChecking else { return }
+        guard !isDemo, !isChecking, !isStopping, !loadFailed else { return }
         do {
             guard let bookmark = try FolderPicker.choose(
                 title: "Zielordner wählen", message: "Wähle einen bestehenden Ordner für die Lesekopien.", readOnly: false
@@ -209,7 +218,7 @@ final class AppModel: ObservableObject {
     }
 
     func useCommonTarget(for database: Database) {
-        guard !isDemo, !isChecking else { return }
+        guard !isDemo, !isChecking, !isStopping, !loadFailed else { return }
         var item = preference(for: database)
         item.target = nil
         preferences.databases[database.id.uuidString] = item
@@ -218,7 +227,7 @@ final class AppModel: ObservableObject {
     }
 
     func setEnabled(_ enabled: Bool, for database: Database) {
-        guard !isDemo, !isChecking else { return }
+        guard !isDemo, !isChecking, !isStopping, !loadFailed else { return }
         var item = preference(for: database)
         item.enabled = enabled
         if !enabled {
@@ -231,10 +240,11 @@ final class AppModel: ObservableObject {
     }
 
     func setNotification(_ key: WritableKeyPath<NotificationPreferences, Bool>, to value: Bool) {
+        guard !isStopping, !loadFailed else { return }
         preferences.notifications[keyPath: key] = value
         pendingNotifications.removeAll { !preferences.notifications[keyPath: $0.1] }
         guard save() else { return }
-        if value, !isDemo {
+        if value, !isDemo, let notifications {
             Task {
                 do { try await notifications.requestAuthorization() }
                 catch { problem = error.localizedDescription }
@@ -244,7 +254,7 @@ final class AppModel: ObservableObject {
     }
 
     func requestNotifications() {
-        guard !isDemo else { return }
+        guard !isDemo, !isStopping, let notifications else { return }
         Task {
             do { try await notifications.requestAuthorization() }
             catch { problem = error.localizedDescription }
@@ -253,7 +263,7 @@ final class AppModel: ObservableObject {
     }
 
     func testNotification() {
-        guard !isDemo else { return }
+        guard !isDemo, !isStopping, let notifications else { return }
         Task {
             do {
                 try await notifications.requestAuthorization()
@@ -264,11 +274,12 @@ final class AppModel: ObservableObject {
     }
 
     func setLogin(_ enabled: Bool) {
-        guard !isDemo else { return }
-        do { try LoginService.setEnabled(enabled) }
+        guard !isDemo, !isStopping, !loadFailed, let environment else { return }
+        do { try environment.setLogin(enabled) }
         catch { problem = error.localizedDescription }
-        loginEnabled = LoginService.enabled
-        loginNeedsApproval = LoginService.requiresApproval
+        let login = environment.loginStatus()
+        loginEnabled = login.enabled
+        loginNeedsApproval = login.needsApproval
     }
 
     private func save() -> Bool {
@@ -289,19 +300,30 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func shutdown() async {
+        isStopping = true
+        environment?.scheduler.stop()
+        monitor?.stop()
+        scanAgain = false
+        await scanTask?.value
+        sourceScope = nil
+        instanceLock = nil
+    }
+
     func refresh() {
-        guard !isDemo else { return }
+        guard !isDemo, !isStopping, let environment else { return }
         guard !loadFailed, let bookmark = preferences.source else { return }
         if persistenceFailed, !save() { return }
         guard !isChecking else { scanAgain = true; return }
         isChecking = true
         let snapshot = preferences
         let currentGeneration = generation
-        Task {
+        scanTask = Task {
             do {
-                let result = try await Task.detached(priority: .utility) { try Self.scan(bookmark, preferences: snapshot) }.value
+                let result = try await Task.detached(priority: .utility) { try Self.scan(bookmark, preferences: snapshot, resolveFolder: environment.resolveFolder) }.value
                 guard currentGeneration == generation else {
                     isChecking = false
+                    scanTask = nil
                     refresh()
                     return
                 }
@@ -339,10 +361,13 @@ final class AppModel: ObservableObject {
                     }
                 }
                 _ = save()
-                armMonitor()
+                if !isStopping { armMonitor() }
             } catch {
                 problem = error.localizedDescription
                 states = [:]
+                sourceScope = nil
+                monitoredPaths = []
+                monitor?.stop()
                 if preferences.globalFailure != problem {
                     preferences.history.insert(HistoryEntry(date: Date(), databaseID: nil, name: "Strongbox", message: error.localizedDescription, isError: true), at: 0)
                     if preferences.notifications.failures { pendingNotifications.append((UUID(), \.failures, "Strongbox konnte nicht gelesen werden", error.localizedDescription, nil)) }
@@ -350,25 +375,26 @@ final class AppModel: ObservableObject {
                     _ = save()
                 }
             }
+            if !isStopping { await deliverNotifications() }
             isChecking = false
-            await deliverNotifications()
-            if scanAgain { scanAgain = false; refresh() }
+            scanTask = nil
+            if scanAgain, !isStopping { scanAgain = false; refresh() }
         }
     }
 
-    private nonisolated static func scan(_ bookmark: Data, preferences: Preferences) throws -> ScanResult {
-        let source = try ScopedFolder(bookmark: bookmark)
+    private nonisolated static func scan(_ bookmark: Data, preferences: Preferences, resolveFolder: @Sendable (Data) throws -> FolderAccess) throws -> ScanResult {
+        let source = try resolveFolder(bookmark)
         defer { withExtendedLifetime(source) {} }
         let databases = try StrongboxCatalog.read(groupContainer: source.url)
         let active = databases.filter { preferences.databases[$0.id.uuidString]?.enabled == true }
-        var targets: [UUID: ScopedFolder] = [:]
+        var targets: [UUID: FolderAccess] = [:]
         defer { withExtendedLifetime(targets) {} }
         var states: [UUID: DatabaseState] = [:]
         var destinations: [CopyDestination] = []
         for database in active {
             do {
                 guard let data = preferences.databases[database.id.uuidString]?.target ?? preferences.defaultTarget else { throw ConfigurationError.missingTarget }
-                let folder = try ScopedFolder(bookmark: data)
+                let folder = try resolveFolder(data)
                 let destination = CopyDestination(databaseID: database.id, directory: folder.url, filename: database.filename)
                 _ = try DestinationPlanner.conflictingDatabaseIDs([destination], sourceRoot: source.url)
                 destinations.append(destination)
@@ -396,11 +422,11 @@ final class AppModel: ObservableObject {
 
     private func armMonitor() {
         do {
-            guard let source = preferences.source else { return }
-            if sourceScope == nil { sourceScope = try ScopedFolder(bookmark: source) }
+            guard let source = preferences.source, let environment else { return }
+            sourceScope = try environment.resolveFolder(source)
             guard let root = sourceScope?.url else { return }
             let backupRoot = root.appendingPathComponent("backups")
-            var urls = [root, root.appendingPathComponent("Library/Preferences"), backupRoot]
+            var urls = [root, root.appendingPathComponent("Library"), root.appendingPathComponent("Library/Preferences"), backupRoot]
             urls += databases.map { backupRoot.appendingPathComponent($0.id.uuidString) }
             urls = urls.filter { FileManager.default.fileExists(atPath: $0.path) }
             let paths = Set(urls.map(\.path))
@@ -424,7 +450,10 @@ final class AppModel: ObservableObject {
         pendingNotifications.append((UUID(), kind, title, body, database.id.uuidString))
     }
     private func deliverNotifications() async {
-        guard !notificationAttemptRunning else { return }
+        guard !notificationAttemptRunning, let notifications else {
+            pendingNotifications.removeAll()
+            return
+        }
         notificationAttemptRunning = true
         defer { notificationAttemptRunning = false }
         while !pendingNotifications.isEmpty {
@@ -441,6 +470,7 @@ final class AppModel: ObservableObject {
         }
     }
     private func updateNotificationStatus() async {
+        guard let notifications, !isStopping else { return }
         await notifications.refreshAuthorization()
         notificationStatus = notifications.status
     }

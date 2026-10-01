@@ -4,6 +4,7 @@ import Darwin
 public enum MirrorError: Error, LocalizedError, Equatable {
     case invalidMetadata, invalidDatabase, inconsistentIdentifier
     case missingBackup, unsafeFile, emptyBackup, changedFile, unsafeFilename, sameFile
+    case targetBusy
     case fileOperation(String)
 
     public var errorDescription: String? {
@@ -17,6 +18,7 @@ public enum MirrorError: Error, LocalizedError, Equatable {
         case .changedFile: "Eine Datei wurde während des Kopierens verändert. Bitte erneut versuchen."
         case .unsafeFilename: "Der Dateiname ist ungültig."
         case .sameFile: "Quelle und Ziel dürfen nicht dieselbe Datei sein."
+        case .targetBusy: "In diesem Zielordner läuft bereits ein Kopiervorgang. Bitte erneut versuchen."
         case .fileOperation(let reason): "Die Datei konnte nicht verarbeitet werden: \(reason)"
         }
     }

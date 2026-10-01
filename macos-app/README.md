@@ -78,10 +78,16 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-pa
 ```
 
 Die Tests erzeugen künstliche Metadaten und Backups in temporären Verzeichnissen.
-Sie prüfen mehrere Datenbanken, unbekannte Metadaten, widersprüchliche UUIDs,
-Backup-Auswahl, leere Backups, unveränderte Inhalte, Ersetzen, Verknüpfungen
-und Unicode-Dateinamen, die auf macOS kollidieren.
+Sie prüfen den Kopierkern und das normale App-Modell mit isolierten Einstellungen.
+Timer und Dateiüberwachung verwenden echte Auslöser; Aufwachen wird über eine
+eigene NotificationCenter-Instanz simuliert. Ordnerfreigaben und Anmeldeobjekte
+werden an der Betriebssystemgrenze ersetzt, damit die Tests keine persönlichen
+Freigaben oder Login-Einstellungen verändern.
 Sie lesen keine echte Strongbox-Datenbank und installieren kein Anmeldeobjekt.
+Die GitHub-CI führt diese Swift-Tests zusätzlich zu den Tests des Shell-Helfers aus.
+
+Der Nachweis für den normalen App-Lebenszyklus und seine Grenzen steht in
+[docs/testing/issue-5-lifecycle.md](../docs/testing/issue-5-lifecycle.md).
 
 ## Isolierter Kopiertest
 

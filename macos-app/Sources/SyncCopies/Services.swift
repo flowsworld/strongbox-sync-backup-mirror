@@ -183,6 +183,7 @@ private final class DirectoryWatch: @unchecked Sendable {
 final class FileMonitor {
     private let onChange: @MainActor @Sendable () -> Void
     private var watches: [DirectoryWatch] = []
+    private var generation = UUID()
 
     init(onChange: @escaping @MainActor @Sendable () -> Void) {
         self.onChange = onChange
@@ -191,15 +192,21 @@ final class FileMonitor {
     /// Replaces the current set only when every requested directory could be opened.
     func watch(_ urls: [URL]) throws {
         var replacement: [DirectoryWatch] = []
+        let nextGeneration = UUID()
         var paths: Set<String> = []
         for url in urls where paths.insert(url.standardizedFileURL.path).inserted {
-            replacement.append(try DirectoryWatch(url: url, onChange: onChange))
+            replacement.append(try DirectoryWatch(url: url) { [weak self] in
+                guard let self, self.generation == nextGeneration else { return }
+                self.onChange()
+            })
         }
         stop()
+        generation = nextGeneration
         watches = replacement
     }
 
     func stop() {
+        generation = UUID()
         watches.forEach { $0.cancel() }
         watches.removeAll()
     }
