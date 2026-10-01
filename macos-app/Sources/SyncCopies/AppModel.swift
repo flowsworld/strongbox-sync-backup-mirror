@@ -433,6 +433,9 @@ final class AppModel: ObservableObject {
             guard paths != monitoredPaths else { return }
             try monitor?.watch(urls)
             monitoredPaths = paths
+            // Files can change after the scan but before new directory watches
+            // are installed. Recheck once with those watches already active.
+            scanAgain = true
         } catch {
             let message = "Dateiüberwachung nicht verfügbar. Die regelmäßige Prüfung bleibt aktiv. \(error.localizedDescription)"
             if preferences.history.first?.message != message {

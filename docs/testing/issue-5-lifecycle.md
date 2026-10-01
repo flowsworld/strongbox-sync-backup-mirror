@@ -42,6 +42,12 @@ bestanden. Für dieses ältere SDK wurden die Benachrichtigungszugriffe auf
 Callback-APIs umgestellt. Nur Statuswerte und Ergebnisse wechseln den Actor;
 SDK-Referenzobjekte bleiben am Aufrufort.
 
+Ein späterer CI-Lauf zeigte eine verpasste Änderung beim Austausch eines
+überwachten Backup-Ordners. Nach dem Installieren neuer Verzeichniswachen
+prüft das App-Modell deshalb einmal erneut. Damit erfasst es auch Dateien,
+die zwischen Scan und Neuaufbau der Überwachung erstellt wurden. Die acht
+gezielten App-Modell-Tests bestanden nach der Korrektur lokal.
+
 Der Release-Build mit Xcode 27.0 und Swift 6.4 sowie die anschließende lokale
 Ad-hoc-Signierung und Signaturprüfung bestanden ebenfalls. Das Bundle wurde
 nicht gestartet. Zwei unabhängige interne Reviews prüften Standards und
