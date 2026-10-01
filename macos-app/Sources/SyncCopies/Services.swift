@@ -87,8 +87,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func refreshAuthorization() async {
-        let settings = await center.notificationSettings()
-        switch settings.authorizationStatus {
+        switch await authorizationStatus() {
         case .notDetermined: status = "Noch nicht freigegeben"
         case .denied: status = "In macOS nicht erlaubt"
         case .authorized: status = "Erlaubt"
@@ -104,8 +103,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func send(title: String, body: String, databaseID: String?) async throws {
-        let settings = await center.notificationSettings()
-        guard [.authorized, .provisional].contains(settings.authorizationStatus) else {
+        guard [.authorized, .provisional].contains(await authorizationStatus()) else {
             throw FolderPermissionError.notificationsDenied
         }
         let content = UNMutableNotificationContent()
@@ -114,6 +112,16 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         content.sound = .default
         if let databaseID { content.userInfo = ["databaseID": databaseID] }
         try await center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+    }
+
+    private func authorizationStatus() async -> UNAuthorizationStatus {
+        // Older SDKs do not mark UNNotificationSettings as Sendable. Extract
+        // the value inside Apple's callback instead of crossing actors with it.
+        await withCheckedContinuation { continuation in
+            center.getNotificationSettings { settings in
+                continuation.resume(returning: settings.authorizationStatus)
+            }
+        }
     }
 
     nonisolated func userNotificationCenter(
