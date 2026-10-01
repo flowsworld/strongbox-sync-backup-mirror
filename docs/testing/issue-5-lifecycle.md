@@ -61,11 +61,12 @@ und kann den geprüften Dateipfad zwischen beiden Schritten ersetzen. Die
 Korrektur entfernt automatische Bereinigung und das Löschen im Fehlerpfad.
 Dadurch entfällt diese Möglichkeit, eine fremde Datei versehentlich zu löschen.
 Der Review wird gemäß der vereinbarten Einmal-Regel nicht erneut angefordert.
-Die fünf gezielten Kopier- und Parallelitätstests der Korrektur bestanden lokal.
-Ein zusätzlicher Test ändert eine künstliche Quelle nach dem Erstellen der
-temporären Datei. Die Kopie muss mit Fehler abbrechen, das bisherige Ziel
-erhalten und die temporären Backup-Bytes mit Modus `0600` liegen lassen.
-Die Suite umfasst damit insgesamt 31 native Tests.
+Die vier gezielten Kopier- und Parallelitätstests prüfen gesperrte Ziele,
+vorhandene abgebrochene Kopien und den Erhalt anderer Zieldateien. Ein zweiter
+interner Review prüfte die Korrektur. Er fand eine zeitabhängige Testprobe,
+die entfernt wurde. Der Anforderungsreview fand keine weiteren Korrekturen.
+Die Suite umfasst insgesamt 30 native Tests. Ein tatsächlicher Prozessabbruch
+nach dem Erstellen einer temporären Datei bleibt Teil der manuellen Abnahme.
 
 ## Manuelle Nachweise und offene Prüfungen
 

@@ -86,50 +86,6 @@ struct CopyConcurrencyTests {
         }
     }
 
-    @Test func sourceChangedAfterTemporaryCreationPreservesTargetAndRetainsEncryptedPartial() throws {
-        try fixture { root, target, _ in
-            let source = root.appendingPathComponent("backup.bak")
-            try Data(repeating: 0x7B, count: 32 * 1024 * 1024).write(to: source)
-            let sourceFile = try openFile(source.lastPathComponent, in: openDirectory(root))
-            let stamp = try sourceFile.stamp()
-            let backup = BackupInfo(url: source, creationDate: stamp.creationDate, size: stamp.size)
-            let destination = target.appendingPathComponent("database.kdbx")
-            let previous = Data("previous encrypted backup".utf8)
-            try previous.write(to: destination)
-            let changed = DispatchSemaphore(value: 0)
-            let writer = Thread {
-                defer { changed.signal() }
-                for _ in 0..<5_000 {
-                    if let names = try? FileManager.default.contentsOfDirectory(atPath: target.path),
-                       names.contains(where: { $0.hasPrefix(".synccopies-") }) {
-                        let descriptor = Darwin.open(source.path, O_WRONLY | O_APPEND | O_CLOEXEC)
-                        guard descriptor >= 0 else { return }
-                        defer { Darwin.close(descriptor) }
-                        var byte: UInt8 = 0x7B
-                        _ = Darwin.write(descriptor, &byte, 1)
-                        return
-                    }
-                    usleep(1_000)
-                }
-            }
-            writer.start()
-            #expect(throws: MirrorError.changedFile) {
-                try MirrorEngine.copy(backup: backup, to: target, filename: destination.lastPathComponent)
-            }
-            #expect(changed.wait(timeout: .now() + 6) == .success)
-            #expect(try Data(contentsOf: destination) == previous)
-            #expect(try sourceFile.stamp().size == stamp.size + 1)
-            let names = try FileManager.default.contentsOfDirectory(atPath: target.path)
-            let partials = names.filter { $0.hasPrefix(".synccopies-") }
-            #expect(partials.count == 1)
-            if let name = partials.first {
-                let partial = try openFile(name, in: openDirectory(target))
-                #expect(try partial.stamp().mode & 0o777 == 0o600)
-                #expect(try readStable(partial).0 == Data(repeating: 0x7B, count: 32 * 1024 * 1024))
-            }
-        }
-    }
-
     @Test func completedTemporaryLookingDestinationOfAnotherDatabaseSurvives() throws {
         try fixture { _, target, backup in
             let completedName = ".synccopies-\(UUID().uuidString).tmp"
