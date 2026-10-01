@@ -49,8 +49,8 @@ die zwischen Scan und Neuaufbau der Überwachung erstellt wurden. Die acht
 gezielten App-Modell-Tests bestanden nach der Korrektur lokal.
 
 Der Release-Build mit Xcode 27.0 und Swift 6.4 sowie die anschließende lokale
-Ad-hoc-Signierung und Signaturprüfung bestanden ebenfalls. Das Bundle wurde
-nicht gestartet. Zwei unabhängige interne Reviews prüften Standards und
+Ad-hoc-Signierung und Signaturprüfung bestanden ebenfalls. Für diesen Build-Check
+wurde das Bundle nicht gestartet. Zwei unabhängige interne Reviews prüften Standards und
 Issue-Anforderungen. Beide fanden keine weiteren Korrekturen. Die fehlenden
 manuellen Abnahmeschritte wurden im Anforderungsreview ausdrücklich bestätigt.
 
@@ -71,10 +71,67 @@ Die vier gezielten Kopier- und Parallelitätstests prüfen gesperrte Ziele,
 vorhandene abgebrochene Kopien und den Erhalt anderer Zieldateien. Ein zweiter
 interner Review prüfte die Korrektur. Er fand eine zeitabhängige Testprobe,
 die entfernt wurde. Der Anforderungsreview fand keine weiteren Korrekturen.
-Die Suite umfasst insgesamt 30 native Tests. Ein tatsächlicher Prozessabbruch
-nach dem Erstellen einer temporären Datei bleibt Teil der manuellen Abnahme.
+Die Suite umfasst insgesamt 30 native Tests. Den späteren tatsächlichen
+Prozessabbruch dokumentiert die folgende Prüfung der signierten App.
 
 ## Manuelle Nachweise und offene Prüfungen
+
+### Signierte App mit künstlichen Daten am 1. Oktober 2026
+
+Geprüft wurde der Release-Code von Commit `4e95282` auf macOS 27.0.1,
+Build 26A434, Apple Silicon. Die QA-Kopie hatte die eigene Bundle-ID
+`cloud.diesis.sync-copies.qa-20261001` und eigene Einstellungen. Nur Bundle-ID
+und Anzeigename wurden geändert; die ausführbare Datei blieb unverändert.
+Die Kopie wurde mit den ursprünglichen Sandbox-Entitlements ad-hoc signiert.
+Der vorhandene Helfer und echte Strongbox-Dateien wurden nicht verwendet.
+
+Computer Use bediente die echten macOS-Ordnerdialoge. Die Test-App erhielt
+Lesezugriff auf die künstliche Quelle und Schreibzugriff auf einen Zielordner
+in einem eigenen APFS-Diskimage. Im normalen App-Modell wurden zwei Datenbanken
+aktiviert. Die dritte Metadaten-Zeile mit einem anderen Speicheranbieter erschien
+nicht in der Auswahl. Beide Kopien waren bytegleich zur Quelle, hatten Modus
+`0600` und wurden in der GUI als "Lokal kopiert" angezeigt.
+
+Anschließend stürzte der native Computer-Use-Dienst wiederholt bei der Abfrage
+der QA-App ab. Die Crashberichte zeigen einen Swift-Array-Indexfehler im Dienst.
+Der Zugriff auf Finder funktionierte, der Zugriff auf die QA-App blieb auch nach
+automatischer Wiederherstellung des Dienstes und Neustart der App blockiert.
+Die Aufnahme beginnt nach den ersten Kopien und zeigt den Wechsel zu Allgemein.
+Sie ist eine Teilaufnahme und dokumentiert weder die Ordnerfreigaben noch die
+anschließenden Dateisystemtests.
+
+Die folgenden Prüfungen liefen gegen dieselbe signierte App über künstliche
+Dateiereignisse und Prozessstarts. Ergebnisse wurden anhand der Zielbytes und
+der von der App gespeicherten Fehler- und Verlaufseinträge geprüft.
+
+| Prüfung | Ergebnis |
+| --- | --- |
+| Neue Backups für beide Datenbanken | Ohne manuelles Prüfen automatisch kopiert. |
+| Austausch eines überwachten Backup-Ordners | Neue Datei im Ersatzordner automatisch kopiert. |
+| Zweiter Start derselben QA-App mit `open -n -W` | Zusätzlicher Start beendet sich sofort; die erste QA-PID bleibt bestehen. Die parallel offene ältere Vorschau hatte eine andere Bundle-ID. |
+| Testvolume auswerfen und neue Quelle erzeugen | Beide Datenbanken melden ein unerreichbares Ziel. Das Volume wird nicht automatisch eingebunden. |
+| Testvolume wieder einbinden | Alte Kopien unverändert erhalten. Nach einem neuen Quellereignis aktualisiert die App die Kopie und löscht den Fehlerzustand. |
+| Neustart nach `SIGTERM` ohne aktive Kopie | Auswahl und Freigaben bleiben erhalten. Eine während der Pause erzeugte Quelle wird ohne neuen Ordnerdialog kopiert. |
+| `SIGKILL` nach Erscheinen der temporären Datei einer 32-MiB-Kopie | Die vorherige Zieldatei bleibt erhalten. Die unvollständige temporäre Datei bleibt mit Modus `0600` liegen. |
+| Wiederanlauf auf dem kleinen 64-MiB-Testvolume | Der erhaltene Testrest verursacht Platzmangel. Die App meldet den Fehler und erhält die alte Kopie. Nach manuellem Verschieben der Testreste aus dem Ziel funktioniert die Kopie wieder, mit identischen Bytes und zurückgesetztem Fehlerzustand. |
+
+Die ursprünglichen künstlichen Backup-Dateien und Metadaten hatten am Ende
+unveränderte SHA-256-Werte. Der Test selbst hatte einen Backup-Ordner umbenannt;
+die darin liegende Originaldatei blieb ebenfalls unverändert.
+
+Teilaufnahme und maschinenlesbare Ergebnisse liegen lokal unter
+`macos-app/build/qa-evidence/issue-5-gui-teilaufnahme.mp4` und
+`macos-app/build/qa-evidence/issue-5-results.json`. Sie werden nicht öffentlich
+hochgeladen. Test-App, künstliche Quellen, Diskimage, beide Vorschau-Bundles und
+übrige Testartefakte wurden nach der Prüfung entfernt. Beide laufenden App-Instanzen
+wurden beendet. Eine erneute Prüfung mit NSWorkspace und der Prozessliste fand
+keine weitere Instanz. Die Aufräumprüfung steht im Ergebnisprotokoll.
+
+Der eigene Zielordner je Datenbank konnte über die GUI nicht mehr geprüft werden.
+Ebenso fehlen Login mit tatsächlichem Ab- und Anmelden, physisches Schlafen und
+Aufwachen, Entzug und erneute Erteilung einer OS-Freigabe sowie ein echtes NAS.
+Das APFS-Diskimage belegt keine SMB-Sperrsemantik. `SIGTERM` ohne aktive Kopie und
+`SIGKILL` während der Kopie belegen nicht das geordnete Beenden über das App-Menü.
 
 Der frühere manuelle Kopiertest mit Lese-Freigabe und separatem Schreibziel ist
 im [App-README](../../macos-app/README.md#ergebnis-des-kopiertests-vom-1-oktober-2026)
@@ -95,8 +152,8 @@ prüfen:
 - Ein separates NAS-Testziel trennen und wieder verbinden. Vorhandene Kopien
   dürfen während des Fehlers nicht ersetzt werden. Sperren und atomarer Austausch
   müssen auf diesem Zielmedium funktionieren.
-- Eine laufende Kopie in einem eigenen Testziel durch Prozessabbruch unterbrechen
-  und erneut starten. Zusätzlich zwei tatsächlich getrennte App-Prozesse starten.
+- Die App während einer laufenden Kopie über ihr Menü beenden. Sie muss die Kopie
+  abschließen und anschließend die Instanzsperre freigeben.
 - Das Verhalten auf den unterstützten älteren macOS-Versionen prüfen.
 
 Für jede manuelle Prüfung Datum, macOS-Version, Signierungsart und Ergebnis
