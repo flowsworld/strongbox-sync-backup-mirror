@@ -1,0 +1,52 @@
+import Foundation
+import Darwin
+
+public struct CopyDestination: Sendable {
+    public let databaseID: UUID
+    public let directory: URL
+    public let filename: String
+
+    public init(databaseID: UUID, directory: URL, filename: String) {
+        self.databaseID = databaseID
+        self.directory = directory
+        self.filename = filename
+    }
+}
+
+public enum DestinationError: Error, LocalizedError, Equatable {
+    case insideSource
+
+    public var errorDescription: String? {
+        "Der Zielordner muss außerhalb des Strongbox-Ordners liegen."
+    }
+}
+
+public enum DestinationPlanner {
+    /// Validate every selected destination before copying any database. Directory
+    /// identity catches different path spellings that refer to the same folder.
+    public static func conflictingDatabaseIDs(_ destinations: [CopyDestination], sourceRoot: URL) throws -> Set<UUID> {
+        let source = try openDirectory(sourceRoot)
+        let sourceStamp = try source.stamp()
+        let sourcePath = normalizedDestinationName(sourceRoot.resolvingSymlinksInPath().standardizedFileURL.path)
+        var groups: [DestinationIdentity: [UUID]] = [:]
+        for destination in destinations {
+            guard validFilename(destination.filename) else { throw MirrorError.unsafeFilename }
+            let directory = try openDirectory(destination.directory)
+            let stamp = try directory.stamp()
+            let path = normalizedDestinationName(destination.directory.resolvingSymlinksInPath().standardizedFileURL.path)
+            let sourcePrefix = sourcePath == "/" ? "/" : sourcePath + "/"
+            guard !stamp.sameIdentity(as: sourceStamp), path != sourcePath,
+                  !path.hasPrefix(sourcePrefix) else { throw DestinationError.insideSource }
+            let identity = DestinationIdentity(device: stamp.device, inode: stamp.inode,
+                                               filename: normalizedDestinationName(destination.filename))
+            groups[identity, default: []].append(destination.databaseID)
+        }
+        return Set(groups.values.filter { $0.count > 1 }.flatMap { $0 })
+    }
+
+    private struct DestinationIdentity: Hashable {
+        let device: dev_t
+        let inode: ino_t
+        let filename: String
+    }
+}
