@@ -97,7 +97,12 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func requestAuthorization() async throws {
-        let allowed = try await center.requestAuthorization(options: [.alert, .sound])
+        let allowed = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Bool, any Error>) in
+            center.requestAuthorization(options: [.alert, .sound]) { @Sendable allowed, error in
+                if let error { continuation.resume(throwing: error) }
+                else { continuation.resume(returning: allowed) }
+            }
+        }
         await refreshAuthorization()
         guard allowed else { throw FolderPermissionError.notificationsDenied }
     }
@@ -111,7 +116,13 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         content.body = body
         content.sound = .default
         if let databaseID { content.userInfo = ["databaseID": databaseID] }
-        try await center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+            center.add(request) { @Sendable error in
+                if let error { continuation.resume(throwing: error) }
+                else { continuation.resume() }
+            }
+        }
     }
 
     private func authorizationStatus() async -> UNAuthorizationStatus {
