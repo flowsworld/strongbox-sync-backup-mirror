@@ -46,6 +46,23 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(events, ["ready", 2, "ready", 4, "ready", 8, "ready"])
         self.assertEqual(opener.return_value.open.call_count, 4)
 
+    def test_retry_discards_proxy_mutation_from_previous_attempt(self):
+        requests = []
+        def open_request(request, **kwargs):
+            requests.append(request)
+            self.assertEqual(request.host, "www.googleapis.com")
+            self.assertIsNone(request._tunnel_host)
+            if len(requests) == 1:
+                # This is the mutation performed by urllib's ProxyHandler.
+                request.set_proxy("old.proxy.test:443", "https")
+                raise URLError("proxy removed during wake")
+            return io.BytesIO(b'{"files":[]}')
+        with patch("google_drive.build_opener") as opener:
+            opener.return_value.open.side_effect = open_request
+            self.assertEqual(google_drive.request_json(google_drive.API_URL + "files"), {"files": []})
+        self.assertEqual(len(requests), 2)
+        self.assertIsNot(requests[0], requests[1])
+
     def test_permanent_errors_and_invalid_json_are_not_retried(self):
         for code in (400, 401, 403, 404):
             with self.subTest(code=code), patch("google_drive.build_opener") as opener:

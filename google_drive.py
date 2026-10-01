@@ -165,10 +165,11 @@ def request_json(url: str, *, data: dict[str, str] | None = None,
         headers["Authorization"] = "Bearer " + access_token
     if data is not None:
         headers["Content-Type"] = "application/x-www-form-urlencoded"
-    request = Request(url, data=urlencode(data).encode() if data is not None else None,
-                      headers=headers)
     for attempt in range(4):
         wait_until_ready(host)
+        # ProxyHandler mutates Requests. Start fresh if proxy settings changed.
+        request = Request(url, data=urlencode(data).encode() if data is not None else None,
+                          headers=headers)
         try:
             with build_opener(_NoRedirect()).open(request, timeout=20) as response:
                 body = response.read(1048577)
