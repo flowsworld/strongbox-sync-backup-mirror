@@ -134,6 +134,29 @@ private final class DriveControllerFixture {
 
 @MainActor
 struct DriveVerificationControllerTests {
+    @Test func supersededFailedErrorDeliveriesDoNotInvalidateSettingsOnRestart() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        fixture.deliveryFails = true
+        await fixture.server.set(remote: nil, problem: .accessDenied)
+        let controller = fixture.controller()
+        try await fixture.bind(controller)
+        for index in 0..<20 {
+            await fixture.server.set(remote: nil, problem: index.isMultiple(of: 2) ? .providerUnavailable : .accessDenied)
+            controller.requestCheck()
+            try await fixture.settle(controller)
+        }
+        let restarted = fixture.controller()
+        #expect(restarted.bindings[fixture.id] == controller.bindings[fixture.id])
+        #expect(restarted.failure == nil)
+        await restarted.start()
+        fixture.deliveryFails = false
+        restarted.requestCheck()
+        try await fixture.settle(restarted)
+        #expect(fixture.delivered.count == 1)
+        #expect(fixture.delivered.first?.problem == .accessDenied)
+    }
+
     @Test func updateQuiesceWaitsForFolderOperationsAndRejectsFurtherMutations() async throws {
         let fixture = try DriveControllerFixture()
         defer { fixture.remove() }

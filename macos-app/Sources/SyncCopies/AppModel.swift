@@ -580,7 +580,7 @@ final class AppModel: ObservableObject {
 
     /// Each check holds both the exact copied inode and its scoped folder grant.
     func driveLocalInputs() -> [DriveLocalInput] {
-        guard !isDemo, let environment else { return [] }
+        guard !isDemo, !isChecking, let environment else { return [] }
         let resolveFolder = environment.resolveFolder
         return databases.filter { preference(for: $0).enabled }.map { database in
             let bookmark = preference(for: database).target ?? preferences.defaultTarget

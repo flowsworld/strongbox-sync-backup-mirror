@@ -183,8 +183,11 @@ Die Vorbereitung für Google Drive, Release-Bau und Updates ist dokumentiert:
 - [Oberflächenvarianten für die offenen Aufgaben](https://pages.diesis.cloud/d/sm01ct3cwj0o).
   Ihre Auswahl steht vor Änderungen an der echten Oberfläche.
 
-Die optionale Google-Drive-Prüfung folgt in einem Update. Diese Fassung bestätigt
-nur die lokale Kopie. Flos vollständiger Umstieg wartet auf die Google-Drive-Prüfung.
+Die optionale Google-Drive-Prüfung ist implementiert. Sie braucht einen eigenen
+Desktop-OAuth-Client. Die [Einrichtung](../docs/manual/native-google-setup.md) ist
+vorbereitet; ohne Client-Konfiguration bleibt sie deaktiviert. Der tatsächliche
+Google-Zugriff und geschützte Keychain-Zugriff mit gültiger Signierung sind noch
+zu prüfen. Flos vollständiger Umstieg wartet auf diese Prüfung.
 
 Produktionssignierung und App-Store-Paket, App-Store-Prüfung, Login und Wake im
 Dauerbetrieb, entzogene Ordnerfreigaben, macOS-Versionsabdeckung und Tests mit

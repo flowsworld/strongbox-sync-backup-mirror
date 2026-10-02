@@ -465,7 +465,9 @@ final class DriveVerificationController: ObservableObject {
         // An alert queued during an older status must never appear after recovery or new content.
         let obsolete = record.pending.filter { event in
             switch event.kind {
-            case .error: if case .error = state.status { return false }; return true
+            case .error:
+                if case .error(let current) = state.status { return event.problem != current }
+                return true
             case .overdue: return state.status != .overdue
             case .confirmed: return !confirmed
             case .recovery: if case .error = state.status { return true }; return false

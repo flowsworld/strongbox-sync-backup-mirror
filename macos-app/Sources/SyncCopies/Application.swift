@@ -85,7 +85,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         }
         model.onOpenSettings = { [weak self] in self?.showSettings() }
         updates.start()
-        Task { await drive.start(); drive.requestCheck() }
+        Task { await drive.start(); if !model.isChecking { drive.requestCheck() } }
         if model.needsSetup || model.isDemo { showSettings() }
     }
 
