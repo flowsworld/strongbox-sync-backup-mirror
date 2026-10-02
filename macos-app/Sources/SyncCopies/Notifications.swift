@@ -1,5 +1,6 @@
 import Foundation
 import UserNotifications
+import SyncCopiesCore
 
 /// The system boundary. Automated tests supply effects without touching OS permissions.
 @MainActor
@@ -17,7 +18,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     private var inFlight: [WritableKeyPath<NotificationPreferences, Bool>: Set<String>] = [:]
     private var prefixes: [WritableKeyPath<NotificationPreferences, Bool>: String] = [:]
     var onSelectDatabase: ((String) -> Void)?
-    private(set) var status = "Noch nicht geprüft"
+    private(set) var status = L10n.text("Not checked yet")
     private(set) var isAuthorized = false
     private let operations: NotificationOperations
 
@@ -132,11 +133,11 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         let authorization = await operations.authorization()
         isAuthorized = [.authorized, .provisional].contains(authorization)
         switch authorization {
-        case .notDetermined: status = "Noch nicht freigegeben"
-        case .denied: status = "In macOS nicht erlaubt"
-        case .authorized: status = "Erlaubt"
-        case .provisional: status = "Leise Mitteilungen erlaubt"
-        @unknown default: status = "Unbekannter macOS-Status"
+        case .notDetermined: status = L10n.text("Permission not requested yet")
+        case .denied: status = L10n.text("Not allowed in macOS")
+        case .authorized: status = L10n.text("Allowed")
+        case .provisional: status = L10n.text("Quiet notifications allowed")
+        @unknown default: status = L10n.text("Unknown macOS status")
         }
         return authorization
     }

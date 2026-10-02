@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import SyncCopiesCore
 import UserNotifications
 @testable import SyncCopies
 
@@ -188,7 +189,7 @@ struct NotificationTests {
         #expect(recorder.authorizationRequests == 0)
         recorder.authorization = .authorized
         await model.updateNotificationStatus()
-        #expect(model.notificationStatus == "Erlaubt")
+        #expect(model.notificationStatus == L10n.text("Allowed"))
         model.refresh()
         try await eventually { !model.isChecking }
         #expect(recorder.requests.isEmpty)
@@ -289,7 +290,7 @@ struct NotificationTests {
         #expect(recorder.requests.count == 1)
         recorder.authorization = .authorized
         await model.updateNotificationStatus()
-        #expect(model.notificationStatus == "Erlaubt")
+        #expect(model.notificationStatus == L10n.text("Allowed"))
         #expect(model.problem == nil)
         await model.shutdown()
     }

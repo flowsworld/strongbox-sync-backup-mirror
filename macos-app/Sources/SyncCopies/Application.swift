@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import Darwin
 import SwiftUI
+import SyncCopiesCore
 
 @main
 struct Application {
@@ -77,36 +78,37 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        let heading = NSMenuItem(title: model.isDemo ? "Sync-Kopien · Vorschau" : "Sync-Kopien", action: nil, keyEquivalent: "")
+        let heading = NSMenuItem(title: model.isDemo ? L10n.format("%@ · Preview", L10n.appName) : L10n.appName, action: nil, keyEquivalent: "")
         menu.addItem(heading)
         if let problem = model.problem { menu.addItem(NSMenuItem(title: problem, action: nil, keyEquivalent: "")) }
         for database in model.databases where model.preference(for: database).enabled {
             let state = model.states[database.id]
-            let status = state?.error != nil ? "Prüfung fehlgeschlagen" : (state?.checked != nil ? "Lokal kopiert" : "Noch nicht geprüft")
+            let status = state?.error != nil ? L10n.text("Check failed") : (state?.checked != nil ? L10n.text("Copied locally") : L10n.text("Not checked yet"))
             let row = NSMenuItem(title: "\(database.displayName): \(status)", action: #selector(openDatabase(_:)), keyEquivalent: "")
             row.representedObject = database.id.uuidString
             row.target = self
             menu.addItem(row)
         }
-        if model.databases.isEmpty { menu.addItem(NSMenuItem(title: "Strongbox-Zugriff einrichten", action: nil, keyEquivalent: "")) }
+        if model.databases.isEmpty { menu.addItem(NSMenuItem(title: L10n.text("Set up Strongbox access"), action: nil, keyEquivalent: "")) }
         menu.addItem(.separator())
-        let check = NSMenuItem(title: model.isChecking ? "Prüfung läuft…" : "Jetzt prüfen", action: #selector(checkNow), keyEquivalent: "r")
+        let check = NSMenuItem(title: model.isChecking ? L10n.text("Checking…") : L10n.text("Check now"), action: #selector(checkNow), keyEquivalent: "r")
         check.target = self
         check.isEnabled = model.sourceGranted && !model.isChecking && !model.isDemo
         menu.autoenablesItems = false
         menu.addItem(check)
-        let settings = NSMenuItem(title: "Einstellungen…", action: #selector(showSettings), keyEquivalent: ",")
+        let settings = NSMenuItem(title: L10n.text("Settings…"), action: #selector(showSettings), keyEquivalent: ",")
         settings.target = self
         menu.addItem(settings)
-        let quit = NSMenuItem(title: "Sync-Kopien beenden", action: #selector(quitApp), keyEquivalent: "q")
+        let quit = NSMenuItem(title: L10n.format("Quit %@", L10n.appName), action: #selector(quitApp), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
     }
 
     private func updateIcon() {
         let warning = model.failureCount > 0 || model.problem != nil
-        statusItem?.button?.image = NSImage(systemSymbolName: warning ? "exclamationmark.triangle" : "doc.on.doc", accessibilityDescription: "Sync-Kopien")
-        statusItem?.button?.toolTip = "Sync-Kopien: \(model.activeCount) aktiv, \(model.failureCount) Probleme"
+        statusItem?.button?.image = NSImage(systemSymbolName: warning ? "exclamationmark.triangle" : "doc.on.doc", accessibilityDescription: L10n.appName)
+        statusItem?.button?.toolTip = L10n.format("%@: Active databases: %@, problems: %@", L10n.appName, L10n.count(model.activeCount), L10n.count(model.failureCount))
+        statusItem?.button?.setAccessibilityLabel(statusItem?.button?.toolTip)
     }
 
     @objc private func checkNow() { model.refresh() }
@@ -120,10 +122,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     @objc func showSettings() {
         if window == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 840, height: 620), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-            window.title = "Sync-Kopien · Einstellungen"
+            window.title = L10n.format("%@ · Settings", L10n.appName)
             window.contentMinSize = NSSize(width: 740, height: 540)
             window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: SettingsView(model: model))
+            window.contentView = NSHostingView(rootView: SettingsView(model: model).environment(\.locale, L10n.locale))
             window.center()
             self.window = window
         }

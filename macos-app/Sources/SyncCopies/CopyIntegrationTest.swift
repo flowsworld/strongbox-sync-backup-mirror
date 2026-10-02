@@ -75,8 +75,8 @@ enum CopyIntegrationTest {
                     let initial = URL(fileURLWithPath: String(cString: home), isDirectory: true)
                         .appendingPathComponent("Library/Group Containers/group.strongbox.mac.mcguill", isDirectory: true)
                     guard let selected = try FolderPicker.choose(
-                        title: "Strongbox-Backups lesend testen / Test read-only access",
-                        message: "Nur Metadaten und verschlüsselte Backups lesen. Testkopien bleiben im vorbereiteten privaten Testordner außerhalb von Cloud-Ordnern. / Read metadata and encrypted backups only. Test copies stay in the prepared private test folder outside cloud folders.",
+                        title: L10n.text("Test read-only access to Strongbox backups"),
+                        message: L10n.text("Read metadata and encrypted backups only. Test copies stay in the prepared private test folder outside cloud folders."),
                         initialURL: initial, readOnly: true
                     ) else { throw Failure.cancelled }
                     bookmark = selected
@@ -109,8 +109,8 @@ enum CopyIntegrationTest {
                 }
                 if retained == nil {
                     guard let bookmark = try FolderPicker.choose(
-                        title: "Separaten Testordner freigeben / Allow isolated test folder",
-                        message: "Nur den vorbereiteten Testordner auswählen. Bestehende Zielordner sind ausgeschlossen. / Choose only the prepared test folder. Existing destinations are excluded.",
+                        title: L10n.text("Allow isolated test folder"),
+                        message: L10n.text("Choose only the prepared test folder. Existing destinations are excluded."),
                         initialURL: expected, readOnly: false
                     ) else { throw Failure.cancelled }
                     let selected = try ScopedFolder(bookmark: bookmark)
