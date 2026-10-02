@@ -13,20 +13,20 @@ Sparkle 2.10.0. Development and Store builds exclude Sparkle and its helpers.
 
 ## Automated and packaging results
 
-At source revision `8b746fa`, all 210 Swift test functions passed: 89 core
-Swift Testing tests, 93 app Swift Testing tests and 28 XCTest tests. All 116
+At source revision `04fb007`, all 211 Swift test functions passed: 89 core
+Swift Testing tests, 93 app Swift Testing tests and 29 XCTest tests. All 116
 Python tests passed. Shell syntax checks passed for repository scripts, and
 Bash syntax plus ShellCheck passed for the prepared local Google wizard.
 
 | Check | Result |
 | --- | --- |
-| Development candidate | Universal release candidate 0.2.0, build 20261003; strict ad-hoc signature verification passed |
+| Development candidate | Universal release candidate 0.2.0, build 2026100301; strict ad-hoc signature verification passed |
 | Architectures and minimum OS | arm64 and x86_64 slices; both Mach-O headers declare macOS 13.0 |
 | Archive | Recorded ZIP SHA-256 matched; extracted signature verified |
 | Detached copy diagnostics | 19 isolated packaged copy checks passed while the entire `.build` directory was unavailable |
 | Detached launch | English, German and French fallback demo processes remained running without `.build` resources |
-| Store fixture | Universal build passed; no Sparkle linkage/framework, SU settings or updater Mach entitlement; signature verified |
-| Direct fixture | Universal build with synthetic client/feed passed; exact Sparkle 2.10.0, nested helper signatures verified, Downloader excluded, profile reporting off |
+| Store fixture at `8b746fa` | Universal build passed; no Sparkle linkage/framework, SU settings or updater Mach entitlement; signature verified |
+| Direct fixture at `8b746fa` | Universal build with synthetic client/feed passed; exact Sparkle 2.10.0, nested helper signatures verified, Downloader excluded, profile reporting off |
 | Direct compilation | Swift 6 typechecks passed for arm64 and x86_64 at macOS 13 with Sparkle 2.10.0 |
 | Privacy manifest | Embedded file timestamp and elapsed-time declarations validated; no tracking or developer-collected data declared |
 
@@ -89,7 +89,9 @@ fixes, including updater cancellation during quit, unchecked restored cloud
 confirmation, an unchanged existing local copy, replaced connection-cancellation
 ownership, stale recovery wording, deferred credential cleanup and unowned
 startup cleanup, staged-credential rollback journaling, directory durability
-before credential deletion and already scheduled notification cancellation.
+before credential deletion and already scheduled notification cancellation and cancellation isolation for shared
+token refreshes. Cancelled refresh callers drain the bounded shared request;
+only account ownership changes cancel that worker.
 Each verified defect has a focused regression test. The last local full Codex
 run was interrupted by its usage limit and is not counted as completed. GitHub
 Codex reviews are requested only after current CI passes.
