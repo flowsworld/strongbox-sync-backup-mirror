@@ -22,6 +22,11 @@ struct DriveView: View {
                 Label(failure, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if drive.cleanupPending {
+                Text(L10n.text("Some previous Google credentials could not be removed. Retry when Keychain is available."))
+                    .foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                Button(L10n.text("Retry credential cleanup")) { Task { await drive.start() } }
+            }
             GroupBox(L10n.text("Google accounts")) {
                 VStack(alignment: .leading, spacing: 12) {
                     if drive.accounts.isEmpty { Text(L10n.text("No Google account connected.")).foregroundStyle(.secondary) }

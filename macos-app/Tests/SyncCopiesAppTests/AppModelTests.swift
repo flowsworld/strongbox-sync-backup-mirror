@@ -112,6 +112,17 @@ private final class ResolutionGate: @unchecked Sendable {
 }
 
 @MainActor
+private final class ModelNotificationGate {
+    var entered = false
+    private var continuation: CheckedContinuation<Void, Never>?
+    func wait() async {
+        entered = true
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func release() { continuation?.resume(); continuation = nil }
+}
+
+@MainActor
 struct AppModelTests {
     @Test func abortedInstallerCannotResumeCopiesDuringTerminationWait() async throws {
         let fixture = try ModelFixture()
@@ -195,6 +206,47 @@ struct AppModelTests {
         let duplicate = AppModel(environment: fixture.environment())
         #expect(duplicate.startupConflict)
         await duplicate.shutdown()
+        await model.shutdown()
+    }
+
+    @Test func existingMatchingCopyIsEligibleForCloudVerificationWithoutAnAppWrite() async throws {
+        let fixture = try ModelFixture()
+        let target = fixture.common.appendingPathComponent(fixture.first.filename)
+        try Data("first encrypted fixture".utf8).write(to: target)
+        let model = AppModel(environment: fixture.environment())
+        try await settled(model)
+        #expect(model.preference(for: fixture.first).lastCopied == nil)
+        #expect(model.states[fixture.first.id]?.error == nil)
+        let input = try #require(model.driveLocalInputs().first { $0.id == fixture.first.id })
+        let snapshot = try await input.makeSnapshot()
+        #expect(snapshot.fingerprint.size == Int64(Data("first encrypted fixture".utf8).count))
+        try await snapshot.validate()
+        await model.shutdown()
+    }
+
+    @Test func cloudCompletionRunsAfterSuspendedLocalNotificationAndClearedCheckingFlag() async throws {
+        let fixture = try ModelFixture()
+        var settings = try JSONDecoder().decode(Preferences.self, from: Data(contentsOf: fixture.preferencesURL))
+        settings.notifications.copies = true
+        try JSONEncoder().encode(settings).write(to: fixture.preferencesURL)
+        let gate = ModelNotificationGate()
+        let notifications = NotificationService(operations: NotificationOperations(
+            authorization: { .authorized }, requestAuthorization: { true },
+            add: { _ in if !gate.entered { await gate.wait() } },
+            removePending: { _ in }, cancelPending: { _ in }, discardPending: {}
+        ))
+        let model = AppModel(environment: fixture.environment(notifications: notifications))
+        var readyAtCompletion = false
+        model.onLocalScanComplete = { [weak model] in
+            guard let model else { return }
+            readyAtCompletion = !model.isChecking && !model.driveLocalInputs().isEmpty
+        }
+        try #require(try await eventually { gate.entered })
+        #expect(model.isChecking)
+        #expect(!readyAtCompletion)
+        gate.release()
+        try await settled(model)
+        #expect(readyAtCompletion)
         await model.shutdown()
     }
 

@@ -354,3 +354,7 @@
 "Google grants read access to metadata across all Drive files. Choosing a folder limits this app's queries, not Google's permission." = "Google grants read access to metadata across all Drive files. Choosing a folder limits this app's queries, not Google's permission.";
 
 "Wait for the current update preparation to finish." = "Wait for the current update preparation to finish.";
+
+"Some previous Google credentials could not be removed. Retry when Keychain is available." = "Some previous Google credentials could not be removed. Retry when Keychain is available.";
+
+"Retry credential cleanup" = "Retry credential cleanup";

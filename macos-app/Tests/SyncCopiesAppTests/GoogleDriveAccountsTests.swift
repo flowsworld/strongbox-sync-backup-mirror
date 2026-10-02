@@ -92,6 +92,80 @@ final class GoogleDriveAccountsTests: XCTestCase {
         XCTAssertFalse(settings.contains("renewed-access"))
     }
 
+    func testListingRetriesDeferredReconnectAndDisconnectCleanupWithoutDeletingActiveCredentials() async throws {
+        for disconnect in [false, true] {
+            let directory = try directory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let registry = directory.appendingPathComponent("accounts.json")
+            let keychain = DriveCredentialFixture()
+            let transport = DriveHTTPFixture(outcomes: []).transport
+            let accounts = GoogleDriveAccounts(registryURL: registry, client: try client(), credentials: keychain.store,
+                                              transport: transport, clock: { 0 })
+            let previous = try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111"), tokens: tokens())
+            let other = try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "222"), tokens: tokens(refresh: "other-refresh"))
+            await keychain.failRemoval(true)
+            var active = [other.account]
+            if disconnect {
+                let result = try await accounts.disconnect(accountID: previous.account.id)
+                XCTAssertTrue(result.cleanupPending)
+            } else {
+                let replacement = try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111"), tokens: tokens(refresh: "replacement-refresh"))
+                XCTAssertTrue(replacement.cleanupPending)
+                active.append(replacement.account)
+            }
+            let lockedList = try await accounts.list()
+            XCTAssertEqual(lockedList.sorted { $0.id < $1.id }, active.sorted { $0.id < $1.id })
+            let pendingWhileLocked = try await accounts.hasPendingCleanup()
+            XCTAssertTrue(pendingWhileLocked)
+            let lockedCredentials = await keychain.snapshot()
+            XCTAssertNotNil(lockedCredentials[previous.account.credentialID])
+            await keychain.failRemoval(false)
+            let reopened = GoogleDriveAccounts(registryURL: registry, client: try client(), credentials: keychain.store,
+                                              transport: transport, clock: { 0 })
+            let cleanedList = try await reopened.list()
+            XCTAssertEqual(cleanedList.sorted { $0.id < $1.id }, active.sorted { $0.id < $1.id })
+            let remaining = await keychain.snapshot()
+            XCTAssertNil(remaining[previous.account.credentialID])
+            XCTAssertEqual(Set(remaining.keys), Set(active.map(\.credentialID)))
+            let pendingAfterCleanup = try await reopened.hasPendingCleanup()
+            XCTAssertFalse(pendingAfterCleanup)
+        }
+    }
+
+    func testListingOwnsCleanupWhileCredentialRemovalIsSuspended() async throws {
+        let directory = try directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let keychain = DriveCredentialFixture()
+        let accounts = GoogleDriveAccounts(registryURL: directory.appendingPathComponent("accounts.json"), client: try client(),
+                                          credentials: keychain.store, transport: DriveHTTPFixture(outcomes: []).transport)
+        let previous = try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111"), tokens: tokens())
+        await keychain.failRemoval(true)
+        let active = try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111"), tokens: tokens(refresh: "replacement"))
+        await keychain.failRemoval(false)
+        await keychain.suspendNextRemoval()
+        let listing = Task { try await accounts.list() }
+        let deadline = Date().addingTimeInterval(2)
+        while !(await keychain.isRemovalSuspended), Date() < deadline { try await Task.sleep(for: .milliseconds(1)) }
+        let suspended = await keychain.isRemovalSuspended
+        XCTAssertTrue(suspended)
+        do {
+            _ = try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "222"), tokens: tokens())
+            XCTFail("Credential cleanup allowed a concurrent registry mutation")
+        } catch { XCTAssertEqual(error as? GoogleDriveAccountFailure, .busy) }
+        let concurrentList = try await accounts.list()
+        XCTAssertEqual(concurrentList, [active.account])
+        let stillPending = try await accounts.hasPendingCleanup()
+        XCTAssertTrue(stillPending)
+        await keychain.releaseRemoval()
+        let list = try await listing.value
+        XCTAssertEqual(list, [active.account])
+        let remaining = await keychain.snapshot()
+        XCTAssertNil(remaining[previous.account.credentialID])
+        XCTAssertEqual(Set(remaining.keys), [active.account.credentialID])
+        let pending = try await accounts.hasPendingCleanup()
+        XCTAssertFalse(pending)
+    }
+
     func testLocalDisconnectWorksOfflineAndFailedRevocationStillDisconnects() async throws {
         for revoke in [false, true] {
             let directory = try directory()
@@ -245,6 +319,9 @@ actor DriveCredentialFixture {
     private var shouldSuspendAdd = false
     private var addContinuation: CheckedContinuation<Void, Never>?
     var isAddSuspended: Bool { addContinuation != nil }
+    private var shouldSuspendRemoval = false
+    private var removalContinuation: CheckedContinuation<Void, Never>?
+    var isRemovalSuspended: Bool { removalContinuation != nil }
     nonisolated var store: GoogleDriveCredentialStore {
         GoogleDriveCredentialStore(read: { try await self.read($0) }, add: { try await self.add($0, data: $1) },
                                    update: { try await self.update($0, data: $1) }, remove: { try await self.remove($0) })
@@ -265,7 +342,11 @@ actor DriveCredentialFixture {
         guard values[id] != nil else { throw GoogleDriveAccountFailure.credentialsMissing }
         values[id] = data
     }
-    func remove(_ id: UUID) throws {
+    func remove(_ id: UUID) async throws {
+        if shouldSuspendRemoval {
+            shouldSuspendRemoval = false
+            await withCheckedContinuation { removalContinuation = $0 }
+        }
         if removalFails { throw GoogleDriveAccountFailure.credentialsUnavailable }
         values.removeValue(forKey: id)
     }
@@ -273,5 +354,7 @@ actor DriveCredentialFixture {
     func failAddAfterWrite(_ fail: Bool) { addAfterWriteFails = fail }
     func suspendNextAdd() { shouldSuspendAdd = true }
     func releaseAdd() { addContinuation?.resume(); addContinuation = nil }
+    func suspendNextRemoval() { shouldSuspendRemoval = true }
+    func releaseRemoval() { removalContinuation?.resume(); removalContinuation = nil }
     func snapshot() -> [UUID: Data] { values }
 }

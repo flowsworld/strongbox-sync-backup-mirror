@@ -354,3 +354,7 @@
 "Google grants read access to metadata across all Drive files. Choosing a folder limits this app's queries, not Google's permission." = "Google erlaubt das Lesen von Metadaten aller Drive-Dateien. Die Ordnerwahl begrenzt die Abfragen dieser App, nicht Googles Berechtigung.";
 
 "Wait for the current update preparation to finish." = "Warte, bis die laufende Update-Vorbereitung abgeschlossen ist.";
+
+"Some previous Google credentials could not be removed. Retry when Keychain is available." = "Einige frühere Google-Zugangsdaten konnten nicht entfernt werden. Versuche es erneut, sobald der Schlüsselbund verfügbar ist.";
+
+"Retry credential cleanup" = "Zugangsdaten erneut bereinigen";

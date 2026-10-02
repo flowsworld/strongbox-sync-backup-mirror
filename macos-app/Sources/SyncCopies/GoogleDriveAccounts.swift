@@ -184,7 +184,19 @@ actor GoogleDriveAccounts {
         self.clock = clock
     }
 
-    func list() throws -> [GoogleDriveAccount] { try loadRegistry().accounts }
+    /// Listing retries deferred removal after Keychain access becomes available.
+    /// A suspended owned mutation keeps exclusive ownership of registry cleanup.
+    func list() async throws -> [GoogleDriveAccount] {
+        try Task.checkCancellation()
+        var registry = try loadRegistry()
+        guard !mutationActive, !registry.pendingRemovals.isEmpty else { return registry.accounts }
+        mutationActive = true
+        defer { mutationActive = false }
+        _ = await cleanup(&registry)
+        return registry.accounts
+    }
+
+    func hasPendingCleanup() throws -> Bool { try !loadRegistry().pendingRemovals.isEmpty }
 
     /// New credentials are staged before the registry changes. Reconnecting preserves the stable account ID.
     func save(identity: GoogleDriveIdentity, tokens: GoogleDriveOAuthTokens) async throws -> GoogleDriveAccountSave {

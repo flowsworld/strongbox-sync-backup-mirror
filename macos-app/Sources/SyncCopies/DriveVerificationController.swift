@@ -79,6 +79,7 @@ struct DriveVerificationEnvironment {
     let cancelNotification: @MainActor (UUID) -> Void
     let history: @MainActor (DriveVerificationEvent) -> Void
     let clock: @MainActor () -> UInt64
+    var credentialCleanupStatus: (@Sendable () async throws -> Bool)? = nil
 
     static func live(accounts: GoogleDriveAccounts, signIn: GoogleDriveSignIn, transport: GoogleDriveTransport,
                      localInputs: @escaping @MainActor () throws -> [DriveLocalInput],
@@ -97,7 +98,8 @@ struct DriveVerificationEnvironment {
             return try GoogleDriveMetadata.resolveFolder(data, requestedID: folderID)
         }, remoteFile: { try await accounts.remoteFile(accountID: $0, folderID: $1, filename: $2) },
              localInputs: localInputs, deliver: deliver, cancelNotification: cancelNotification, history: history,
-             clock: { UInt64(max(0, Date().timeIntervalSince1970)) })
+             clock: { UInt64(max(0, Date().timeIntervalSince1970)) },
+             credentialCleanupStatus: { try await accounts.hasPendingCleanup() })
     }
 }
 
@@ -111,6 +113,7 @@ final class DriveVerificationController: ObservableObject {
     @Published private(set) var failure: DriveControllerFailure?
     @Published private(set) var isConnecting = false
     @Published private(set) var isChecking = false
+    @Published private(set) var cleanupPending = false
     var isAvailable: Bool { environment != nil }
     var canChangeSettings: Bool { !stopped && !demo }
     static let permissionURL = URL(string: "https://myaccount.google.com/connections")!
@@ -128,6 +131,11 @@ final class DriveVerificationController: ObservableObject {
     @Published private var stopped = false
     private var mutations: [UUID: Task<Void, any Error>] = [:]
     private var activeDatabaseIDs: Set<UUID> = []
+    private struct CurrentCopy {
+        let context: UploadVerificationContext
+        let sha256: String
+    }
+    private var validatedCopies: [UUID: CurrentCopy] = [:]
 
     init(settingsURL: URL, environment: DriveVerificationEnvironment?, demo: Bool = false) {
         self.settingsURL = settingsURL
@@ -151,8 +159,10 @@ final class DriveVerificationController: ObservableObject {
         let captured = generation
         do {
             let loaded = try await environment.listAccounts()
+            let pending = try await environment.credentialCleanupStatus?() ?? false
             guard captured == generation else { return }
             accounts = loaded
+            cleanupPending = pending
             if failure != .invalidSavedState { failure = nil }
         } catch { failure = .accountUnavailable }
     }
@@ -181,6 +191,8 @@ final class DriveVerificationController: ObservableObject {
     }
 
     func cancelConnect() {
+        // Stop may call this again while the original sign-in is still rolling back staged credentials.
+        guard connectionCancellation == nil else { return }
         connectionGeneration &+= 1
         let captured = connectionGeneration
         let old = connectionTask
@@ -342,6 +354,7 @@ final class DriveVerificationController: ObservableObject {
     private func invalidateChecks() {
         generation &+= 1
         checkTask?.cancel()
+        validatedCopies.removeAll()
         results = [:]
         for record in settings.records.values {
             if let environment { record.pending.forEach { environment.cancelNotification($0.id) } }
@@ -350,11 +363,15 @@ final class DriveVerificationController: ObservableObject {
 
     private func checkAll(generation captured: UInt64) async {
         guard let environment else { return }
+        validatedCopies.removeAll()
+        results = [:]
         let inputs: [DriveLocalInput]
         do {
             let current = try await environment.listAccounts()
+            let pending = try await environment.credentialCleanupStatus?() ?? false
             guard captured == generation, !Task.isCancelled else { return }
             if current != accounts { accounts = current }
+            cleanupPending = pending
             inputs = try environment.localInputs()
         } catch {
             guard captured == generation, !Task.isCancelled else { return }
@@ -367,8 +384,7 @@ final class DriveVerificationController: ObservableObject {
         // An input is present only while its local database and copy selection are enabled.
         let active = Set(inputs.map(\.id))
         activeDatabaseIDs = active
-        results = settings.records.filter { active.contains($0.key) && settings.bindings[$0.key] != nil }
-            .mapValues(\.state)
+        publish()
         for input in inputs {
             guard captured == generation, !Task.isCancelled else { return }
             guard let binding = settings.bindings[input.id] else { continue }
@@ -389,6 +405,7 @@ final class DriveVerificationController: ObservableObject {
             do {
                 snapshot = try await input.makeSnapshot()
                 guard captured == generation, !Task.isCancelled, let snapshot else { return }
+                validatedCopies[input.id] = CurrentCopy(context: context, sha256: snapshot.fingerprint.sha256)
                 let previous = settings.records[input.id]?.state
                 if previous?.context != context || previous?.localSHA256 != snapshot.fingerprint.sha256 {
                     let pending = UploadVerification.evaluate(context: context, local: snapshot.fingerprint,
@@ -407,6 +424,7 @@ final class DriveVerificationController: ObservableObject {
                     try commit(next)
                     old.forEach { environment.cancelNotification($0.id) }
                 }
+                publish()
                 let remote = try await environment.remoteFile(binding.accountID, binding.folderID, input.filename)
                 try await snapshot.validate()
                 guard captured == generation, !Task.isCancelled else { return }
@@ -470,10 +488,19 @@ final class DriveVerificationController: ObservableObject {
                 return true
             case .overdue: return state.status != .overdue
             case .confirmed: return !confirmed
-            case .recovery: if case .error = state.status { return true }; return false
+            case .recovery:
+                if case .error = state.status { return true }
+                return event.confirmed != confirmed
             }
         }
         record.pending.removeAll { event in obsolete.contains(where: { $0.id == event.id }) }
+        if obsolete.contains(where: { $0.kind == .recovery }) {
+            // Retry a recovery using its current confirmation fact, never the old queued wording.
+            switch state.status {
+            case .error: break
+            default: if kind == nil || kind == .confirmed { kind = .recovery }
+            }
+        }
         let event = kind.map { DriveVerificationEvent(id: UUID(), databaseID: id, databaseName: name,
                                                      kind: $0, problem: problem, confirmed: confirmed) }
         if let event {
@@ -523,7 +550,12 @@ final class DriveVerificationController: ObservableObject {
     private func publish() {
         bindings = settings.bindings
         preferences = settings.preferences
-        results = settings.records.filter { settings.bindings[$0.key] != nil && activeDatabaseIDs.contains($0.key) }.mapValues(\.state)
+        results = settings.records.filter { id, record in
+            guard settings.bindings[id] != nil, activeDatabaseIDs.contains(id) else { return false }
+            guard record.state.status == .confirmed else { return true }
+            guard let current = validatedCopies[id] else { return false }
+            return current.context == record.state.context && current.sha256 == record.state.localSHA256
+        }.mapValues(\.state)
     }
 
     private static func problem(_ error: any Error) -> UploadVerificationFailure {

@@ -562,9 +562,10 @@ final class AppModel: ObservableObject {
                     _ = save()
                 }
             }
-            if !isStopping { onLocalScanComplete?(); await deliverNotifications() }
+            if !isStopping { await deliverNotifications() }
             isChecking = false
             scanTask = nil
+            if !isStopping { onLocalScanComplete?() }
             if scanAgain, !isStopping { scanAgain = false; refresh() }
         }
     }
@@ -585,8 +586,7 @@ final class AppModel: ObservableObject {
         return databases.filter { preference(for: $0).enabled }.map { database in
             let bookmark = preference(for: database).target ?? preferences.defaultTarget
             let ready = sourceReadStatus == .available && preferences.globalFailure == nil &&
-                states[database.id]?.error == nil && states[database.id]?.checked != nil &&
-                preference(for: database).lastCopied != nil
+                states[database.id]?.error == nil && states[database.id]?.checked != nil
             let identity = bookmark.map { SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined() } ?? "unconfigured"
             return DriveLocalInput(id: database.id, name: database.displayName, filename: database.filename,
                                    destinationID: identity, makeSnapshot: {
