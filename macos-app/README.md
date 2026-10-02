@@ -72,10 +72,15 @@ Der Kopierkern prüft Dateien über Deskriptoren, lehnt Verknüpfungen ab und
 vergleicht Quelle und Ziel. Unveränderte Inhalte werden nicht erneut geschrieben.
 Geänderte Inhalte schreibt er mit Dateimodus `0600` in eine temporäre Datei im
 Zielordner. Nach erneutem Prüfen der Quelle und des bisherigen Ziels ersetzt er
-die Zieldatei atomar. Fehler vor dem Ersetzen lassen die vorhandene Kopie stehen.
-Ein abgebrochener Versuch kann eine temporäre Datei mit Modus `0600` im
-Zielordner hinterlassen. Die App löscht solche Dateien nicht automatisch,
-damit sie keine inzwischen von einem anderen Prozess ersetzte Datei entfernt.
+die Zieldatei mit einem atomaren Austausch. Die verdrängte Vorgängerdatei bleibt
+unter `.synccopies-UUID.tmp` erhalten, auch nach erfolgreichem Kopieren. Eine
+gleichzeitig geänderte Datei wird dadurch nicht gelöscht. Konflikte und
+Dateisysteme ohne atomare Austauschoperation melden einen Fehler.
+Abgebrochene Versuche können ebenfalls temporäre Dateien hinterlassen.
+Diese Dateien belegen zusätzlichen Speicher. Verdrängte fremde Dateien behalten
+ihre bisherigen Berechtigungen. Die App entfernt solche Dateien nicht automatisch.
+Prüfe Inhalt und Herkunft vor einer manuellen Bereinigung; sie können neuere
+Daten eines anderen Prozesses enthalten.
 Die App speichert keine Passwörter und lädt keine Dateien in eine Cloud hoch.
 
 ## Tests

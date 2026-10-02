@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import CryptoKit
 
 public struct BackupInfo: Sendable {
     public let url: URL
@@ -51,6 +52,14 @@ public enum CopyResult: Sendable, Equatable { case copied, unchanged }
 
 public enum MirrorEngine {
     public static func copy(backup: BackupInfo, to targetDirectory: URL, filename: String) throws -> CopyResult {
+        try copy(backup: backup, to: targetDirectory, filename: filename, publish: { fromFD, from, toFD, to, flags in
+            renameatx_np(fromFD, from, toFD, to, flags)
+        })
+    }
+
+    // The publication syscall boundary permits deterministic external-writer fixtures.
+    static func copy(backup: BackupInfo, to targetDirectory: URL, filename: String,
+                     publish: (Int32, String, Int32, String, UInt32) throws -> Int32) throws -> CopyResult {
         guard validDestinationFilename(filename) else { throw MirrorError.unsafeFilename }
         let sourceDirectory = try openDirectory(backup.url.deletingLastPathComponent(), accessRole: .source)
         let sourceName = backup.url.lastPathComponent
@@ -62,6 +71,7 @@ public enum MirrorEngine {
         let destinationLock = try DestinationLock.acquire(in: destination)
         defer { withExtendedLifetime(destinationLock) {} }
         let original = try entryStamp(filename, in: destination)
+        var originalDigest: SHA256.Digest?
         if let original {
             guard original.regular else { throw MirrorError.unsafeFile }
             guard !original.sameIdentity(as: sourceStamp) else { throw MirrorError.sameFile }
@@ -73,12 +83,13 @@ public enum MirrorEngine {
                 try destinationLock.validate()
                 return .unchanged
             }
+            originalDigest = try digest(target, stamp: original)
         }
         let temporaryName = ".synccopies-\(UUID().uuidString).tmp"
         var writer: Descriptor? = try Descriptor(openat(destination.value, temporaryName, O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600))
-        // Retain temporary files after any failure. A sync client can replace
-        // their paths independently of our advisory lock, so deleting by name
-        // could remove someone else's file. Successful rename consumes ours.
+        // An exchange retains the displaced entry here, including a concurrent
+        // sync client's newer inode. Even successful copies keep the predecessor:
+        // a separate identity check and unlink could delete a replacement instead.
         try copyStable(source, stamp: sourceStamp, to: writer!)
         guard fsync(writer!.value) == 0 else { throw fileOperationError() }
         let temporary = try finishCopiedFile(&writer, name: temporaryName, in: destination)
@@ -88,10 +99,60 @@ public enum MirrorEngine {
               try entryStamp(filename, in: destination) == original else { throw MirrorError.changedFile }
         try verifyDirectories(sourceDirectory, sourceURL: backup.url.deletingLastPathComponent(), destination: destination, destinationURL: targetDirectory)
         try destinationLock.validate()
-        guard renameat(destination.value, temporaryName, destination.value, filename) == 0 else {
-            throw fileOperationError()
+        let flags = UInt32(original == nil ? RENAME_EXCL : RENAME_SWAP)
+        guard try publish(destination.value, temporaryName, destination.value, filename, flags) == 0 else {
+            let failure = errno
+            if failure == EEXIST || failure == ENOENT { throw MirrorError.changedFile }
+            // Unsupported atomic operations must not fall back to a replacing rename.
+            throw fileOperationError(failure)
+        }
+        let published = try temporary.stamp()
+        guard unchangedByRename(published, temporaryStamp),
+              try entryStamp(filename, in: destination) == published else { throw MirrorError.changedFile }
+        var displaced: FileStamp?
+        if let original {
+            guard let stamp = try entryStamp(temporaryName, in: destination), unchangedByRename(stamp, original) else {
+                throw MirrorError.changedFile
+            }
+            let previous = try openFile(temporaryName, in: destination)
+            guard try digest(previous, stamp: stamp) == originalDigest else { throw MirrorError.changedFile }
+            displaced = stamp
+        }
+        try verifySource(source, stamp: sourceStamp, snapshot: temporary, snapshotStamp: published, name: sourceName, directory: sourceDirectory)
+        try verifyDirectories(sourceDirectory, sourceURL: backup.url.deletingLastPathComponent(), destination: destination, destinationURL: targetDirectory)
+        try destinationLock.validate()
+        guard try entryStamp(filename, in: destination) == published else { throw MirrorError.changedFile }
+        if let displaced {
+            guard try entryStamp(temporaryName, in: destination) == displaced else { throw MirrorError.changedFile }
         }
         return .copied
+    }
+
+    /// An exchange updates ctime on both inodes. Content is checked separately
+    /// so an in-place write with a restored mtime cannot hide behind that update.
+    private static func unchangedByRename(_ current: FileStamp, _ expected: FileStamp) -> Bool {
+        current.sameIdentity(as: expected) && current.size == expected.size && current.mode == expected.mode &&
+        current.linkCount == expected.linkCount && current.birthSeconds == expected.birthSeconds &&
+        current.birthNanos == expected.birthNanos && current.modifiedSeconds == expected.modifiedSeconds &&
+        current.modifiedNanos == expected.modifiedNanos
+    }
+
+    private static func digest(_ file: Descriptor, stamp: FileStamp) throws -> SHA256.Digest {
+        guard stamp.regular, stamp.size >= 0 else { throw MirrorError.unsafeFile }
+        guard try file.stamp() == stamp else { throw MirrorError.changedFile }
+        var hasher = SHA256()
+        var buffer = [UInt8](repeating: 0, count: 1024 * 1024)
+        var offset: off_t = 0
+        while offset < stamp.size {
+            let count = pread(file.value, &buffer, Int(min(off_t(buffer.count), stamp.size - offset)), offset)
+            if count < 0 && errno == EINTR { continue }
+            guard count >= 0 else { throw fileOperationError() }
+            guard count > 0 else { throw MirrorError.changedFile }
+            buffer.withUnsafeBytes { hasher.update(bufferPointer: UnsafeRawBufferPointer(rebasing: $0[..<count])) }
+            offset += off_t(count)
+        }
+        guard try file.stamp() == stamp else { throw MirrorError.changedFile }
+        return hasher.finalize()
     }
 
     private static func verifyDirectories(_ source: Descriptor, sourceURL: URL, destination: Descriptor, destinationURL: URL) throws {

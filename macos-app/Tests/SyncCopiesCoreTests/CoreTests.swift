@@ -111,7 +111,7 @@ struct CoreTests {
         #expect(try openFile("a.kdbx", in: openDirectory(target)).stamp() == before)
         #expect(try Data(contentsOf: file) == Data("encrypted contents".utf8))
     }
-    @Test func testChangedCopyReplacesAtomicallyAndErrorsPreserveExistingFile() throws {
+    @Test func testChangedCopyRetainsPreviousInodeAndErrorsPreserveCurrentCopy() throws {
         defer { try! FileManager.default.removeItem(at: root) }
         let target = try directory("target")
         let file = target.appendingPathComponent("a.kdbx")
@@ -127,7 +127,15 @@ struct CoreTests {
         let stale = BackupInfo(url: backup.url, creationDate: backup.creationDate, size: 1)
         #expect(throws: (any Error).self) { try MirrorEngine.copy(backup: stale, to: target, filename: "a.kdbx") }
         #expect(try Data(contentsOf: file) == Data("replacement".utf8))
-        #expect(try FileManager.default.contentsOfDirectory(atPath: target.path) == ["a.kdbx"])
+        let directory = try openDirectory(target)
+        let original = try old.stamp()
+        let retained = try FileManager.default.contentsOfDirectory(atPath: target.path).filter {
+            try entryStamp($0, in: directory)?.sameIdentity(as: original) == true
+        }
+        #expect(retained.count == 1)
+        if let name = retained.first {
+            #expect(try Data(contentsOf: target.appendingPathComponent(name)) == Data("previous".utf8))
+        }
     }
     @Test func testRejectsLinksAndSourceAsTarget() throws {
         defer { try! FileManager.default.removeItem(at: root) }

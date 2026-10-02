@@ -35,8 +35,17 @@ struct CopyConcurrencyTests {
             #expect(try Data(contentsOf: file) == previous)
             #expect(Set(try FileManager.default.contentsOfDirectory(atPath: target.path)) == Set([file.lastPathComponent, activeTemporary.lastPathComponent]))
             held = nil
+            let directory = try openDirectory(target)
+            let original = try openFile(file.lastPathComponent, in: directory).stamp()
+            let foreign = try entryStamp(activeTemporary.lastPathComponent, in: directory)
             #expect(try MirrorEngine.copy(backup: backup, to: target, filename: file.lastPathComponent) == .copied)
-            #expect(Set(try FileManager.default.contentsOfDirectory(atPath: target.path)) == Set([file.lastPathComponent, activeTemporary.lastPathComponent]))
+            let names = try FileManager.default.contentsOfDirectory(atPath: target.path)
+            let retained = try names.filter { try entryStamp($0, in: directory)?.sameIdentity(as: original) == true }
+            #expect(retained.count == 1)
+            #expect(Set(names) == Set([file.lastPathComponent, activeTemporary.lastPathComponent] + retained))
+            #expect(try entryStamp(activeTemporary.lastPathComponent, in: directory) == foreign)
+            #expect(try Data(contentsOf: activeTemporary) == Data("another writer's partial copy".utf8))
+            if let name = retained.first { #expect(try Data(contentsOf: target.appendingPathComponent(name)) == previous) }
         }
     }
 
@@ -114,8 +123,17 @@ struct CopyConcurrencyTests {
             #expect(throws: MirrorError.changedFile) { try MirrorEngine.copy(backup: invalid, to: target, filename: existing.lastPathComponent) }
             #expect(FileManager.default.fileExists(atPath: target.appendingPathComponent(stale).path))
             #expect(try Data(contentsOf: existing) == Data("previous".utf8))
+            let directory = try openDirectory(target)
+            let original = try openFile(existing.lastPathComponent, in: directory).stamp()
+            let foreignNames = [stale, unrelated, publicFile, unmarked, link, hardLink, lowercase]
+            let foreign = try foreignNames.map { try entryStamp($0, in: directory) }
             #expect(try MirrorEngine.copy(backup: backup, to: target, filename: existing.lastPathComponent) == .copied)
-            #expect(Set(try FileManager.default.contentsOfDirectory(atPath: target.path)) == Set([stale, unrelated, publicFile, unmarked, link, hardLink, lowercase, existing.lastPathComponent]))
+            let names = try FileManager.default.contentsOfDirectory(atPath: target.path)
+            let retained = try names.filter { try entryStamp($0, in: directory)?.sameIdentity(as: original) == true }
+            #expect(retained.count == 1)
+            #expect(Set(names) == Set(foreignNames + [existing.lastPathComponent] + retained))
+            #expect(try foreignNames.map { try entryStamp($0, in: directory) } == foreign)
+            if let name = retained.first { #expect(try Data(contentsOf: target.appendingPathComponent(name)) == Data("previous".utf8)) }
             #expect(try Data(contentsOf: outside) == Data("keep outside".utf8))
         }
     }
