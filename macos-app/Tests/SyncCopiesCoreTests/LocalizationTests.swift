@@ -21,7 +21,7 @@ struct LocalizationTests {
         #expect(restored.rendered(locale: Locale(identifier: "de_AT")) == "Neue Kopie erstellt")
         #expect(restored.rendered(locale: Locale(identifier: "en_US")) == "New copy created")
         #expect(restored.rendered(locale: Locale(identifier: "fr_FR")) == "New copy created")
-        #expect(restored.identity == message.identity)
+        #expect(restored == message)
     }
 
     @Test func migratedLegacyHistoryRetainsKnownAndUnknownMeaning() throws {
@@ -34,12 +34,12 @@ struct LocalizationTests {
         #expect(unknown.rendered(locale: Locale(identifier: "en_US")) == "Earlier event (original language): Ein alter unbekannter Fehler")
     }
 
-    @Test func errorIdentityRemainsStableAcrossLanguagesAndArgumentBoundaries() {
+    @Test func genericErrorsDoNotStoreRawLocalizedDescriptions() {
         let error = NSError(domain: "NSCocoaErrorDomain", code: 257, userInfo: [NSLocalizedDescriptionKey: "Zugriff verweigert"])
         let message = LocalizedMessage.from(error)
         #expect(message.rendered(locale: Locale(identifier: "en_US")) == "Operation failed (NSCocoaErrorDomain, code 257).")
         #expect(message.rendered(locale: Locale(identifier: "de_AT")) == "Vorgang fehlgeschlagen (NSCocoaErrorDomain, Code 257).")
-        #expect(LocalizedMessage(key: "a", arguments: ["bc"]).identity != LocalizedMessage(key: "ab", arguments: ["c"]).identity)
+        #expect(message == LocalizedMessage.from(NSError(domain: "NSCocoaErrorDomain", code: 257, userInfo: [NSLocalizedDescriptionKey: "Access denied"])))
     }
 
     @Test func nativeFormattingUsesTheRequestedRegion() {
@@ -58,7 +58,7 @@ struct LocalizationTests {
         let restored = try JSONDecoder().decode(LocalizedMessage.self, from: JSONEncoder().encode(event))
         #expect(restored.rendered(locale: Locale(identifier: "en_US")) == "File monitoring is unavailable. Periodic checks remain active. The file could not be processed: No route to host")
         #expect(restored.rendered(locale: Locale(identifier: "de_AT")) == "Dateiüberwachung nicht verfügbar. Die regelmäßige Prüfung bleibt aktiv. Die Datei konnte nicht verarbeitet werden: Host nicht erreichbar")
-        #expect(restored.identity == event.identity)
+        #expect(restored == event)
         let legacy = LocalizedMessage(legacyText: "Dateiüberwachung nicht verfügbar. Die regelmäßige Prüfung bleibt aktiv. Ein unbekannter OS-Fehler")
         #expect(legacy.rendered(locale: Locale(identifier: "en_US")) == "Earlier event (original language): Dateiüberwachung nicht verfügbar. Die regelmäßige Prüfung bleibt aktiv. Ein unbekannter OS-Fehler")
     }

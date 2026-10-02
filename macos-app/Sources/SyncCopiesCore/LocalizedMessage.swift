@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 public protocol LocalizedMessageError: Error {
     var message: LocalizedMessage { get }
@@ -23,11 +24,6 @@ public struct LocalizedMessage: Codable, Equatable, Sendable {
         return parts.dropFirst().enumerated().reduce(parts[0]) { result, part in
             result + (arguments.indices.contains(part.offset) ? arguments[part.offset] : "%@") + part.element
         }
-    }
-
-    /// Length framing avoids collisions without depending on rendered language.
-    public var identity: String {
-        ([key] + arguments + causes.map(\.identity)).map { "\($0.utf8.count):\($0)" }.joined()
     }
 
     public static func from(_ error: any Error) -> LocalizedMessage {
@@ -62,10 +58,23 @@ public struct LocalizedMessage: Codable, Equatable, Sendable {
 
     private static let legacyTemplates: [LegacyTemplate] = ["en", "de"].flatMap { language -> [LegacyTemplate] in
         let bundle = L10n.resourceBundle(language: language)
-        guard let url = bundle.url(forResource: "Localizable", withExtension: "strings"),
-              let data = try? Data(contentsOf: url),
-              let values = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: String]
-        else { return [] }
+        let logger = Logger(subsystem: "cloud.diesis.sync-copies", category: "localization")
+        guard let url = bundle.url(forResource: "Localizable", withExtension: "strings") else {
+            logger.error("Missing legacy localization resources for \(language, privacy: .public)")
+            return []
+        }
+        let values: [String: String]
+        do {
+            let data = try Data(contentsOf: url)
+            guard let parsed = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: String] else {
+                logger.error("Invalid legacy localization resource format for \(language, privacy: .public)")
+                return []
+            }
+            values = parsed
+        } catch {
+            logger.error("Cannot read legacy localization resources for \(language, privacy: .public): \(String(describing: error))")
+            return []
+        }
         return values.filter {
             $0.key != "appName" && $0.key != "Earlier event (original language): %@"
                 && $0.key != "The file could not be processed: %@" && $0.key != "File monitoring is unavailable. Periodic checks remain active. %@"
