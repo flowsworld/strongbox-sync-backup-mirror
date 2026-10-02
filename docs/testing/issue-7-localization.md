@@ -32,8 +32,9 @@ opaque OS descriptions retain the full original text with an explicit
 original-language label. Database names and filenames remain user data.
 
 The C1 arrangement and the meaning of its copy disclaimer are preserved. The
-final change is based on #5's merged copy/recovery implementation, including its
+final change includes #5's merged copy/recovery implementation, including its
 General-only source/common-target controls, full paths and copy-details button.
+It also preserves #6's merged notification authorization and cancellation logic.
 
 ## Local evidence
 
@@ -80,12 +81,12 @@ The CI workflow runs the native Swift tests and builds/verifies the signed app,
 then launches the demo with `.build` temporarily moved out of reach, in addition
 to the existing Python/helper tests. The build verifies resource
 packaging through the runnable app and its ad-hoc signature. The final local run
-passed all 69 Swift tests and all 107 Python tests. A release build and signature
+passed all 77 Swift tests and all 107 Python tests. A release build and signature
 verification passed. Both resource sets contain 166 matching keys and matching
 format placeholders.
 
 Independent standards and specification reviews covered the final diff after
-integration with #5. Resource parsing now reports errors, an unused identity API
+integration with #5 and #6. Resource parsing now reports errors, an unused identity API
 was removed, and two redundant nested resource lookups were simplified. The
 specification review found no source defects. No findings were dismissed.
 
@@ -97,3 +98,8 @@ and swiftbuild subsequently displayed German, English and the English fallback
 while their development resource bundles were hidden. All 69 Swift tests and the
 release build passed again. A focused independent verification found no defects
 in this correction or the added CI check.
+
+After #6 merged, both independent reviews were repeated against the new base
+with no new findings. Its notification status strings now use the existing
+resources; history assertions use event keys. The final 77-test Swift suite
+includes all eight new notification tests from #6.
