@@ -233,4 +233,8 @@
 
 "Retry update installation" = "Retry update installation";
 
+"Installation waits until the current copy and check have finished." = "Installation waits until the current copy and check have finished.";
+
+"Automatic updates follow your Mac App Store settings." = "Automatic updates follow your Mac App Store settings.";
+
 "The update could not be completed." = "The update could not be completed.";

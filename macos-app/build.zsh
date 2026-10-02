@@ -76,7 +76,15 @@ mkdir -p "$app_dir/build"
 mkdir "$build_lock" || { print -u2 'Another channel is currently building.'; exit 1; }
 owned_resolved=0
 staging=''
+previous=''
+output_bundle=$app_bundle
 cleanup() {
+    if [[ -n "$previous" && -e "$previous" && ! -e "$output_bundle" && ! -L "$output_bundle" ]]; then
+        if ! mv "$previous" "$output_bundle"; then
+            print -u2 "The previous candidate is preserved at $previous"
+            staging=''
+        fi
+    fi
     [[ -z "$staging" ]] || rm -rf -- "$staging"
     (( owned_resolved == 0 )) || rm -f -- "$app_dir/Package.resolved"
     rmdir "$build_lock"

@@ -139,9 +139,7 @@ The research and unconfigured direct/Store candidate implementation are complete
 
 - Flo's confirmation of final production distribution identities and the actual feed/public key.
 - An authorized Apple account/team, Developer ID and Store signing/provisioning material, and controlled key backups.
-- Independent review of the new direct-only packager and updater adapter.
-- Parent integration of the approved Info page and its German/English resources.
-- Final host shutdown integration, cancellation recovery and tested durable schema migration.
+- Tested durable schema migration for a future settings schema change.
 - A real signed A-to-B sandbox test, nested helper/notarization checks and grant-persistence evidence across the supported OS/architecture matrix.
 - An approved production HTTPS host and privacy/log-retention decision. Public publication is a separate authorization.
 

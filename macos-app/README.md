@@ -293,7 +293,8 @@ Ohne ausdrücklich angegebene HTTPS-Appcast-Adresse und öffentlichen
 Ed25519-Schlüssel bleibt der Updater abgeschaltet. Es gibt keinen
 voreingestellten Produktionshost oder erzeugten Produktionsschlüssel.
 `--feed-url` und `--public-key` müssen gemeinsam angegeben werden. Automatische
-Prüfungen und automatische Downloads/Installation sind zunächst ausgeschaltet.
+Prüfungen sind bei eingerichteten Direct-Builds zunächst eingeschaltet.
+Automatische Downloads und Installation sind zunächst ausgeschaltet.
 
 Die Direct-Release-Vorbereitung verlangt zusätzlich zum vorhandenen
 Developer-ID-Argument `DIESIS_UPDATE_FEED_URL` und `DIESIS_UPDATE_PUBLIC_KEY`.

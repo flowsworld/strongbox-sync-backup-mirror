@@ -147,6 +147,7 @@ final class AppModel: ObservableObject {
     private var pendingNotifications: [PendingNotification] = []
     private var scanAgain = false
     private var generation = 0
+    private var updatePreparationGeneration = 0
     private var sourceScope: FolderAccess?
     private var monitoredPaths: Set<String> = []
     private var monitor: FileMonitor?
@@ -396,12 +397,15 @@ final class AppModel: ObservableObject {
     /// failed durable save cancels installation and restores normal scheduling.
     func prepareForUpdate() async -> Bool {
         if isDemo { return false }
+        updatePreparationGeneration += 1
+        let preparation = updatePreparationGeneration
         isStopping = true
         environment?.scheduler.stop()
         monitor?.stop()
         monitoredPaths = []
         scanAgain = false
         await scanTask?.value
+        guard !Task.isCancelled, preparation == updatePreparationGeneration else { return false }
         guard save(durable: true) else {
             resumeAfterCancelledUpdate()
             return false
@@ -411,6 +415,7 @@ final class AppModel: ObservableObject {
 
     func resumeAfterCancelledUpdate() {
         guard isStopping else { return }
+        updatePreparationGeneration += 1
         isStopping = false
         monitoredPaths = []
         environment?.scheduler.start { [weak self] in self?.refresh() }
@@ -430,6 +435,7 @@ final class AppModel: ObservableObject {
     }
 
     func shutdown() async {
+        updatePreparationGeneration += 1
         isStopping = true
         environment?.scheduler.stop()
         monitor?.stop()

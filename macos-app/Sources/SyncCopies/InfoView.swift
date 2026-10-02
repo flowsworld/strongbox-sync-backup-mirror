@@ -34,7 +34,11 @@ struct InfoView: View {
                         Toggle(L10n.text("Automatically download and install updates"), isOn: Binding(
                             get: { updates.automaticallyDownloadsUpdates }, set: updates.setAutomaticDownloads
                         )).toggleStyle(.checkbox).disabled(!updates.canCheckForUpdates || !updates.automaticallyChecksForUpdates)
+                        Text(L10n.text("Installation waits until the current copy and check have finished.")).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     } else if updates.configuration.channel == .store {
+                        Text(L10n.text("Automatic updates follow your Mac App Store settings.")).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                         Button(L10n.text("Open in the Mac App Store")) { updates.openStore() }
                             .disabled(!updates.canOpenStore)
                         if updates.configuration.storeURL == nil {

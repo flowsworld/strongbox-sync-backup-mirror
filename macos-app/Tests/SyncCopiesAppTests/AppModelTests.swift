@@ -156,6 +156,31 @@ struct AppModelTests {
         await model.shutdown()
     }
 
+    @Test func cancelledUpdatePreparationDoesNotOwnANewerAttempt() async throws {
+        let fixture = try ModelFixture()
+        let gate = ResolutionGate()
+        let base = fixture.environment()
+        let resolve = base.resolveFolder
+        let environment = AppEnvironment(preferencesURL: base.preferencesURL, resolveFolder: { data in
+            if data == Data("source".utf8), !gate.hasEntered { gate.wait() }
+            return try resolve(data)
+        }, scheduler: base.scheduler, notifications: nil, loginStatus: base.loginStatus, setLogin: base.setLogin)
+        let model = AppModel(environment: environment)
+        defer { gate.release.signal() }
+        try #require(try await eventually { gate.hasEntered })
+        let first = Task { await model.prepareForUpdate() }
+        try #require(try await eventually { model.isStopping })
+        first.cancel()
+        model.resumeAfterCancelledUpdate()
+        let second = Task { await model.prepareForUpdate() }
+        try #require(try await eventually { model.isStopping })
+        gate.release.signal()
+        #expect(!(await first.value))
+        #expect(await second.value)
+        #expect(model.isStopping)
+        await model.shutdown()
+    }
+
     @Test func updatePreparationPreservesSettingsAndCopies() async throws {
         let fixture = try ModelFixture()
         let model = AppModel(environment: fixture.environment())
