@@ -81,7 +81,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
             // prepare an installer while this wait is suspended.
             await model.quiesceForTermination()
             if updates.requiresDurableQuit, !model.persistForUpdateTermination() {
-                model.resumeAfterCancelledUpdate()
+                model.cancelTermination()
                 terminationPending = false
                 sender.reply(toApplicationShouldTerminate: false)
                 return

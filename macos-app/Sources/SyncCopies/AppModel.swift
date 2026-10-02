@@ -149,6 +149,7 @@ final class AppModel: ObservableObject {
     private var scanAgain = false
     private var generation = 0
     private var updatePreparationGeneration = 0
+    private var isTerminating = false
     private var sourceScope: FolderAccess?
     private var monitoredPaths: Set<String> = []
     private var monitor: FileMonitor?
@@ -397,7 +398,7 @@ final class AppModel: ObservableObject {
     /// Quiesce copies without releasing the instance lock or folder grants. A
     /// failed durable save cancels installation and restores normal scheduling.
     func prepareForUpdate() async -> Bool {
-        if isDemo { return false }
+        if isDemo || isTerminating { return false }
         updatePreparationGeneration += 1
         let preparation = updatePreparationGeneration
         isStopping = true
@@ -415,7 +416,7 @@ final class AppModel: ObservableObject {
     }
 
     func resumeAfterCancelledUpdate() {
-        guard isStopping else { return }
+        guard isStopping, !isTerminating else { return }
         updatePreparationGeneration += 1
         isStopping = false
         monitoredPaths = []
@@ -437,6 +438,7 @@ final class AppModel: ObservableObject {
     }
 
     func quiesceForTermination() async {
+        isTerminating = true
         updatePreparationGeneration += 1
         isStopping = true
         environment?.scheduler.stop()
@@ -448,6 +450,11 @@ final class AppModel: ObservableObject {
 
     func persistForUpdateTermination() -> Bool {
         isStopping && save(durable: true)
+    }
+
+    func cancelTermination() {
+        isTerminating = false
+        resumeAfterCancelledUpdate()
     }
 
     func completeShutdown() {

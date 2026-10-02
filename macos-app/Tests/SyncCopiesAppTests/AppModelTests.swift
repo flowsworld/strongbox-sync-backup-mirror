@@ -113,6 +113,34 @@ private final class ResolutionGate: @unchecked Sendable {
 
 @MainActor
 struct AppModelTests {
+    @Test func abortedInstallerCannotResumeCopiesDuringTerminationWait() async throws {
+        let fixture = try ModelFixture()
+        let gate = ResolutionGate()
+        let base = fixture.environment()
+        let resolve = base.resolveFolder
+        let environment = AppEnvironment(preferencesURL: base.preferencesURL, resolveFolder: { data in
+            if data == Data("source".utf8), !gate.hasEntered { gate.wait() }
+            return try resolve(data)
+        }, scheduler: base.scheduler, notifications: nil, loginStatus: base.loginStatus, setLogin: base.setLogin)
+        let model = AppModel(environment: environment)
+        defer { gate.release.signal() }
+        try #require(try await eventually { gate.hasEntered })
+        let updates = AppUpdates(demo: false, resumeAfterCancelledUpdate: { model.resumeAfterCancelledUpdate() }, prepareForUpdate: { true })
+        updates.installerDidStart()
+        let stop = Task { await model.quiesceForTermination() }
+        try #require(try await eventually { model.isStopping })
+        updates.cancelInstallation()
+        #expect(model.isStopping)
+        gate.release.signal()
+        await stop.value
+        #expect(model.isStopping)
+        #expect(!model.isChecking)
+        model.completeShutdown()
+        let replacement = AppModel(environment: fixture.environment())
+        #expect(!replacement.startupConflict)
+        await replacement.shutdown()
+    }
+
     @Test func matchingExistingCopiesCompleteSetupWithoutWritingThem() async throws {
         let fixture = try ModelFixture()
         try Data("first encrypted fixture".utf8).write(to: fixture.common.appendingPathComponent(fixture.first.filename))
