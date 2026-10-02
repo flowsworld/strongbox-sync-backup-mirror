@@ -12,7 +12,7 @@ binary_dir=$(swift build --package-path "$app_dir" -c release --show-bin-path)
 mkdir -p "$app_bundle/Contents/MacOS"
 cp "$binary_dir/SyncCopies" "$app_bundle/Contents/MacOS/SyncCopies"
 mkdir -p "$app_bundle/Contents/Resources"
-# SwiftPM's generated accessor expects this bundle inside the app resources.
+# L10n loads the embedded bundle from the app's standard resource directory.
 ditto "$binary_dir/SyncCopies_SyncCopiesCore.bundle" "$app_bundle/Contents/Resources/SyncCopies_SyncCopiesCore.bundle"
 for language in en de; do
     name=$(plutil -extract appName raw -o - "$app_dir/Sources/SyncCopiesCore/Resources/$language.lproj/Localizable.strings")
