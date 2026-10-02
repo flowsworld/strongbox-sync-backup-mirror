@@ -11,6 +11,12 @@ For Google Drive, an optional upload check asks the Drive API for the file's
 metadata and confirms that the upload matches the local copy. Other targets
 work without it.
 
+## Native macOS app in development
+
+The native menu bar app and its C1 settings UI live in [macos-app](macos-app/README.md).
+A safe `--demo` mode shows sample databases. This development version does not yet
+include the optional Google Drive verification and does not replace the shell helper.
+
 ## Requirements
 
 - macOS with Strongbox and a database stored in Strongbox Sync.
