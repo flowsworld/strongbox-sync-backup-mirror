@@ -8,6 +8,7 @@ private final class NotificationRecorder {
     var authorization: UNAuthorizationStatus = .authorized
     var requests: [UNNotificationRequest] = []
     var authorizationRequests = 0
+    var discarded = 0
     var authorizationHook: (() async -> Void)?
     var removed: [String] = []
     var addHook: (() async -> Void)?
@@ -27,7 +28,8 @@ private final class NotificationRecorder {
                 requests.append(request)
             },
             removePending: { [self] in removed += $0 },
-            cancelPending: { [self] prefix in removed += requests.filter { $0.identifier.hasPrefix(prefix) }.map(\.identifier) }
+            cancelPending: { [self] prefix in removed += requests.filter { $0.identifier.hasPrefix(prefix) }.map(\.identifier) },
+            discardPending: { [self] in discarded += 1 }
         ))
     }
 }
@@ -51,6 +53,23 @@ struct NotificationTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         Issue.record("Notification test did not settle")
+    }
+
+    @Test func onlyTheProcessOwningSettingsDiscardsStaleRequests() async throws {
+        let fixture = try ModelFixture()
+        let recorder = NotificationRecorder()
+        let model = AppModel(environment: fixture.environment(notifications: recorder.service()))
+        try await eventually { !model.isChecking }
+        #expect(recorder.discarded == 1)
+        let duplicate = AppModel(environment: fixture.environment(notifications: recorder.service()))
+        #expect(duplicate.startupConflict)
+        #expect(recorder.discarded == 1)
+        await duplicate.shutdown()
+        await model.shutdown()
+        let restarted = AppModel(environment: fixture.environment(notifications: recorder.service()))
+        try await eventually { !restarted.isChecking }
+        #expect(recorder.discarded == 2)
+        await restarted.shutdown()
     }
 
     @Test func switchingOffCategoryCancelsAnInFlightAuthorizationCheck() async throws {

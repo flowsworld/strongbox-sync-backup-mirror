@@ -226,7 +226,7 @@ Eine während der macOS-Abfrage ausgeschaltete Kategorie verhindert jetzt auch
 die bereits begonnene Zustellung. Noch ausstehende macOS-Anfragen dieser Kategorie
 werden entfernt; frühere Ereignisse werden nach einem Neustart nicht nachgeliefert.
 
-Die 7 neuen Mitteilungstests prüfen 15 Fälle ohne macOS-Freigabedialoge. Der
-vollständige native Testlauf besteht aus 68 Testfunktionen. Ergebnisse, Aufbau
+Die 8 neuen Mitteilungstests prüfen 16 Fälle ohne macOS-Freigabedialoge. Der
+vollständige native Testlauf besteht aus 69 Testfunktionen. Ergebnisse, Aufbau
 und Grenzen der nativen Prüfung stehen in
 [issue-6-notifications.md](../docs/testing/issue-6-notifications.md).

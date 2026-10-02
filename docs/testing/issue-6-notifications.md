@@ -58,8 +58,8 @@ These are OS presentation limits, rather than evidence of failed scheduling.
 
 ## Automated coverage and validation
 
-- The full native suite passed: 29 core and 39 app test functions.
-- Seven notification test functions exercise 15 cases. They use the normal
+- The full native suite passed: 29 core and 40 app test functions.
+- Eight notification test functions exercise 16 cases. They use the normal
   model with temporary settings and sources, plus injected notification effects.
   They never instantiate the OS notification center or request OS permission.
 - All eight combinations of category preferences are covered, along with the
@@ -74,7 +74,8 @@ These are OS presentation limits, rather than evidence of failed scheduling.
   old requests from an earlier process are discarded at startup.
 - All 107 existing Python tests passed. The release app built and passed
   ad-hoc signature verification. The final named-field cleanup was checked with
-  the focused notification suite and another release build.
+  the focused notification suite and another release build. A final startup check also verifies that only the
+  process owning the settings lock discards stale requests.
 
 ## Independent review
 
@@ -83,3 +84,10 @@ replacing positional notification tuple fields with named fields. That suggestio
 was implemented. The Spec review found no incorrect implementation, missing state
 decision or scope creep. No findings were dismissed. The clients' cross-model
 review step applies to Claude Code and was skipped in this Codex session.
+
+## Cleanup
+
+The fixture app's notification permission was switched off, its delivered
+notifications cleared, and its process stopped. Its app registration, dedicated
+app bundle, sandbox container, artificial files, temporary runner and local UI
+captures were removed. Other apps and notification preferences were left intact.

@@ -9,6 +9,7 @@ struct NotificationOperations {
     let add: (UNNotificationRequest) async throws -> Void
     let removePending: ([String]) -> Void
     let cancelPending: (String) -> Void
+    let discardPending: () -> Void
 }
 
 @MainActor
@@ -57,11 +58,16 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
                     UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: requests
                         .filter { $0.identifier.hasPrefix(prefix) }.map(\.identifier))
                 }
-            }
+            },
+            discardPending: { center.removeAllPendingNotificationRequests() }
         ))
         center.delegate = self
-        // Requests have no trigger. Anything still pending from an earlier process is stale.
-        center.removeAllPendingNotificationRequests()
+    }
+
+    /// Call only after acquiring the settings lock, so a duplicate app cannot
+    /// discard requests owned by the process that is already running.
+    func discardStaleRequests() {
+        operations.discardPending()
     }
 
     func refreshAuthorization() async {

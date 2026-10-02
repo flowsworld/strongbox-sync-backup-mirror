@@ -185,6 +185,7 @@ final class AppModel: ObservableObject {
             persistenceFailed = true
             problem = "Die gespeicherten Einstellungen konnten nicht gelesen werden. \(error.localizedDescription)"
         }
+        notifications?.discardStaleRequests()
         monitor = FileMonitor { [weak self] in
             self?.monitoredPaths = []
             self?.refresh()
