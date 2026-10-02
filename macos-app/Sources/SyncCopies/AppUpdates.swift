@@ -43,6 +43,7 @@ struct AppUpdateConfiguration: Equatable {
 /// Only direct builds compile Sparkle. The host owns durable shutdown and passes its result here.
 @MainActor
 final class AppUpdates: NSObject, ObservableObject {
+    enum UserChoice { case install, dismiss, skip }
     let configuration: AppUpdateConfiguration
     @Published private(set) var statusMessage: String
     @Published private(set) var canCheckForUpdates = false
@@ -154,6 +155,17 @@ final class AppUpdates: NSObject, ObservableObject {
         NSWorkspace.shared.open(url)
     }
 
+    /// A launched installer can finish on ordinary quit, before the relaunch prompt is accepted.
+    func installerDidStart() {
+        guard !demo else { return }
+        isInstallingUpdate = true
+    }
+
+    func userMadeUpdateChoice(_ choice: UserChoice, installerAlreadyStarted: Bool) {
+        // Dismiss keeps a prepared installer scheduled. Skip cancels it without an abort error.
+        if choice == .skip, installerAlreadyStarted { cancelInstallation() }
+    }
+
     /// Returns immediately, then releases the continuation once after durable preparation succeeds.
     /// A failed save retains the pending update for an explicit user retry.
     func postponeInstallation(until continuation: @escaping () -> Void) {
@@ -222,6 +234,23 @@ extension AppUpdates: SPUUpdaterDelegate {
     func allowedSystemProfileKeys(for updater: SPUUpdater) -> [String]? { [] }
     func feedParameters(for updater: SPUUpdater, sendingSystemProfile: Bool) -> [[String: String]] { [] }
 
+    func updater(_ updater: SPUUpdater, didExtractUpdate item: SUAppcastItem) {
+        // Sparkle calls this after launching the installer, including manual downloads.
+        installerDidStart()
+    }
+
+    func updater(_ updater: SPUUpdater, userDidMake choice: SPUUserUpdateChoice,
+                 forUpdate item: SUAppcastItem, state: SPUUserUpdateState) {
+        let selected: UserChoice
+        switch choice {
+        case .install: selected = .install
+        case .dismiss: selected = .dismiss
+        case .skip: selected = .skip
+        @unknown default: return
+        }
+        userMadeUpdateChoice(selected, installerAlreadyStarted: state.stage == .installing)
+    }
+
     func updater(_ updater: SPUUpdater, shouldPostponeRelaunchForUpdate item: SUAppcastItem,
                  untilInvokingBlock installHandler: @escaping () -> Void) -> Bool {
         postponeInstallation(until: installHandler)
@@ -231,7 +260,7 @@ extension AppUpdates: SPUUpdaterDelegate {
     func updater(_ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem,
                  immediateInstallationBlock immediateInstallHandler: @escaping () -> Void) -> Bool {
         // Keep normal Sparkle scheduling. The host's applicationShouldTerminate gate also covers install-on-quit.
-        isInstallingUpdate = true
+        installerDidStart()
         return false
     }
 

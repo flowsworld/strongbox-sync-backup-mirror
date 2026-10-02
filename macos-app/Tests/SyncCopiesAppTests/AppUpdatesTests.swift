@@ -111,6 +111,55 @@ struct AppUpdatesTests {
         #expect(newInstallations == 1)
         #expect(oldInstallations == 0)
     }
+
+    @Test func manualReadyInstallerRequiresDurableQuitEvenBeforeRelaunchIsChosen() {
+        var preparations = 0
+        let updates = AppUpdates(demo: false, prepareForUpdate: { preparations += 1; return false })
+        #expect(!updates.isInstallingUpdate)
+        updates.installerDidStart()
+        #expect(updates.isInstallingUpdate)
+        #expect(!updates.isPreparingInstallation)
+        #expect(preparations == 0)
+        updates.userMadeUpdateChoice(.dismiss, installerAlreadyStarted: true)
+        #expect(updates.isInstallingUpdate)
+        updates.userMadeUpdateChoice(.install, installerAlreadyStarted: true)
+        #expect(updates.isInstallingUpdate)
+    }
+
+    @Test func skipPreparedAutomaticInstallerClearsQuitGateAndAllowsAnotherCycle() async {
+        var resumptions = 0
+        var installations = 0
+        let updates = AppUpdates(demo: false, resumeAfterCancelledUpdate: { resumptions += 1 }, prepareForUpdate: { true })
+        updates.installerDidStart()
+        updates.userMadeUpdateChoice(.dismiss, installerAlreadyStarted: true)
+        #expect(updates.isInstallingUpdate)
+        updates.userMadeUpdateChoice(.skip, installerAlreadyStarted: true)
+        #expect(!updates.isInstallingUpdate)
+        #expect(!updates.installationBlocked)
+        #expect(resumptions == 1)
+        updates.userMadeUpdateChoice(.skip, installerAlreadyStarted: true)
+        #expect(resumptions == 1)
+        updates.installerDidStart()
+        updates.postponeInstallation { installations += 1 }
+        for _ in 0..<1_000 where updates.isPreparingInstallation { await Task.yield() }
+        #expect(installations == 1)
+        #expect(updates.isInstallingUpdate)
+        updates.userMadeUpdateChoice(.skip, installerAlreadyStarted: true)
+        #expect(!updates.isInstallingUpdate)
+        #expect(resumptions == 2)
+    }
+
+    @Test func skippingAnUnpreparedUpdateDoesNotCancelAnAlreadyScheduledInstaller() {
+        var resumptions = 0
+        let updates = AppUpdates(demo: false, resumeAfterCancelledUpdate: { resumptions += 1 }, prepareForUpdate: { false })
+        updates.installerDidStart()
+        updates.userMadeUpdateChoice(.skip, installerAlreadyStarted: false)
+        #expect(updates.isInstallingUpdate)
+        #expect(resumptions == 0)
+        let demo = AppUpdates(demo: true, prepareForUpdate: { true })
+        demo.installerDidStart()
+        #expect(!demo.isInstallingUpdate)
+    }
 }
 
 @MainActor
