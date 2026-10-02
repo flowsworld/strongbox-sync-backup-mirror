@@ -30,6 +30,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     private var statusItem: NSStatusItem?
     private var window: NSWindow?
     private var observer: AnyCancellable?
+    private var terminationPending = false
 
     init(demo: Bool) {
         model = AppModel(demo: demo)
@@ -37,6 +38,15 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if model.startupConflict {
+            if let identifier = Bundle.main.bundleIdentifier {
+                NSRunningApplication.runningApplications(withBundleIdentifier: identifier)
+                    .first { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }?
+                    .activate(options: [])
+            }
+            NSApplication.shared.terminate(nil)
+            return
+        }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         let menu = NSMenu()
         menu.delegate = self
@@ -48,6 +58,17 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         }
         model.onOpenSettings = { [weak self] in self?.showSettings() }
         if !model.sourceGranted || model.isDemo { showSettings() }
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !terminationPending else { return .terminateLater }
+        terminationPending = true
+        Task {
+            // Finish any atomic copy before releasing access and the instance lock.
+            await model.shutdown()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {

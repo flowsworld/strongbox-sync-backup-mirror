@@ -9,5 +9,6 @@ let package = Package(
         .target(name: "SyncCopiesCore"),
         .executableTarget(name: "SyncCopies", dependencies: ["SyncCopiesCore"]),
         .testTarget(name: "SyncCopiesCoreTests", dependencies: ["SyncCopiesCore"]),
+        .testTarget(name: "SyncCopiesAppTests", dependencies: ["SyncCopies", "SyncCopiesCore"]),
     ]
 )

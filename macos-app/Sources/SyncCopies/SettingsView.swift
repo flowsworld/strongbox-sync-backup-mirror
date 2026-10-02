@@ -64,18 +64,11 @@ struct SettingsView: View {
             }
             GroupBox("Gemeinsamer Zielordner") {
                 VStack(alignment: .leading, spacing: 10) {
-                    HStack { Label(model.commonTargetName, systemImage: "folder"); Spacer(); Button("Ändern…") { model.chooseTarget() }.disabled(model.isDemo || model.isChecking) }
+                    HStack(alignment: .top) { folderPath(model.commonTargetName); Spacer(); Button("Ändern…") { model.chooseTarget() }.disabled(model.isDemo || model.isChecking) }
                     Text("Wird verwendet, solange eine Datenbank kein eigenes Ziel hat.").font(.callout).foregroundStyle(.secondary)
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
-            GroupBox("Strongbox-Zugriff") {
-                HStack {
-                    Label(model.sourceGranted ? "Lesezugriff erlaubt" : "Lesezugriff erforderlich", systemImage: model.sourceGranted ? "checkmark.circle" : "lock")
-                    Spacer()
-                    Button(model.sourceGranted ? "Erneut erlauben…" : "Zugriff erlauben…") { model.chooseSource() }
-                        .disabled(model.isDemo || model.isChecking)
-                }
-            }
+            GroupBox("Strongbox-Zugriff") { sourceAccess }
             Text("Die App kopiert automatisch, solange sie läuft. Änderungen an lokalen Strongbox-Backups lösen eine Prüfung aus; zusätzlich wird alle 15 Minuten und nach dem Aufwachen geprüft.")
                 .font(.callout).foregroundStyle(.secondary)
         }
@@ -95,18 +88,9 @@ struct SettingsView: View {
                     .font(.callout).frame(maxWidth: .infinity, alignment: .leading)
             }
             if !model.sourceGranted {
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Erlaube zuerst den Lesezugriff auf Strongbox. Die App zeigt anschließend die gefundenen Datenbanken.")
-                        Button("Strongbox-Zugriff erlauben…") { model.chooseSource() }.buttonStyle(.borderedProminent)
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                }
+                Text("Erlaube unter Allgemein zuerst den Lesezugriff auf Strongbox. Die App zeigt anschließend die gefundenen Datenbanken.")
+                    .foregroundStyle(.secondary)
             } else {
-                HStack {
-                    Label(model.commonTargetName, systemImage: "folder")
-                    Spacer()
-                    Button("Gemeinsames Ziel ändern…") { model.chooseTarget() }.disabled(model.isDemo || model.isChecking)
-                }
                 if model.databases.isEmpty {
                     Text("Keine Strongbox-Sync-Datenbank gefunden.").foregroundStyle(.secondary)
                 }
@@ -131,9 +115,12 @@ struct SettingsView: View {
                 else if state?.checked != nil { Label("Lokal kopiert", systemImage: "checkmark.circle").foregroundStyle(.green) }
                 else { Text("Noch nicht geprüft").foregroundStyle(.secondary) }
             }
-            HStack {
-                Text(preferences.target == nil ? "Gemeinsamer Zielordner" : (model.isDemo ? state?.targetName ?? "Eigenes Ziel" : model.label(for: preferences.target)))
-                    .font(.callout).foregroundStyle(.secondary)
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(preferences.target == nil ? "Gemeinsamer Zielordner" : "Eigener Zielordner")
+                        .foregroundStyle(.secondary)
+                    folderPath(model.targetFolderPath(for: database))
+                }.font(.callout)
                 Spacer()
                 if preferences.target != nil {
                     Button("Gemeinsames Ziel") { model.useCommonTarget(for: database) }.disabled(model.isDemo || model.isChecking)
@@ -142,7 +129,24 @@ struct SettingsView: View {
                     .disabled(model.isDemo || model.isChecking)
             }
             if let error = state?.error { Text(error).font(.callout).foregroundStyle(.orange).textSelection(.enabled) }
-            DisclosureGroup("Kopierdetails anzeigen", isExpanded: Binding(get: { model.expandedDatabases.contains(database.id) }, set: { if $0 { model.expandedDatabases.insert(database.id) } else { model.expandedDatabases.remove(database.id) } })) {
+            Button {
+                if model.expandedDatabases.contains(database.id) { model.expandedDatabases.remove(database.id) }
+                else { model.expandedDatabases.insert(database.id) }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: model.expandedDatabases.contains(database.id) ? "chevron.down" : "chevron.right")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Text("Kopierdetails anzeigen")
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .font(.callout)
+            .accessibilityLabel("Kopierdetails anzeigen, \(database.displayName)")
+            .accessibilityValue(model.expandedDatabases.contains(database.id) ? "Ausgeklappt" : "Eingeklappt")
+            if model.expandedDatabases.contains(database.id) {
                 VStack(alignment: .leading, spacing: 10) {
                     detail("Dateiname", database.filename)
                     if let date = state?.backup?.creationDate { detail("Neuestes lokales Backup", date.formatted(date: .abbreviated, time: .shortened)) }
@@ -150,9 +154,34 @@ struct SettingsView: View {
                     if let date = state?.checked { detail("Letzte Prüfung", date.formatted(date: .abbreviated, time: .shortened)) }
                     if let size = state?.backup?.size { detail("Dateigröße", ByteCountFormatter.string(fromByteCount: size, countStyle: .file)) }
                     detail("Cloud-Prüfung", "In dieser Version nicht verfügbar")
-                }.padding(.top, 10)
-            }.font(.callout)
+                }.padding(.top, 10).font(.callout)
+            }
         }
+    }
+
+    private func folderPath(_ path: String) -> some View {
+        Label {
+            Text(path)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        } icon: {
+            Image(systemName: "folder")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var sourceAccess: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label(model.sourceReadStatus.title, systemImage: model.sourceReadStatus == .available ? "checkmark.circle" : "lock")
+                    .foregroundStyle(model.sourceReadStatus == .available ? Color.green : model.sourceReadStatus == .unavailable ? Color.orange : Color.secondary)
+                Spacer()
+                Button(model.sourceGranted ? "Erneut erlauben…" : "Zugriff erlauben…") { model.chooseSource() }
+                    .disabled(!model.canChooseSource)
+            }
+            if model.sourceGranted { folderPath(model.sourceFolderPath).font(.callout) }
+        }.frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func detail(_ name: String, _ value: String) -> some View {
