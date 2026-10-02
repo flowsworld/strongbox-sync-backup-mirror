@@ -1,6 +1,7 @@
 # Native Drive and update integration checks
 
-Checked on 2026-10-02 on macOS 27.0.1, Apple Silicon, Xcode 27.0 and Swift 6.4.
+Checked on 2026-10-02 and repeated after the final fixes on 2026-10-03,
+on macOS 27.0.1, Apple Silicon, Xcode 27.0 and Swift 6.4.
 The implementation is split across PRs [#17](https://github.com/flowsworld/strongbox-sync-backup-mirror/pull/17),
 [#18](https://github.com/flowsworld/strongbox-sync-backup-mirror/pull/18) and the
 native Drive provider PR linked from issue #9. The full ordinary-app acceptance
@@ -12,13 +13,27 @@ Sparkle 2.10.0. Development and Store builds exclude Sparkle and its helpers.
 
 ## Automated and packaging results
 
-At implementation revision `b9e516d`, all 205 Swift test functions passed:
-89 core Swift Testing tests, 90 app Swift Testing tests and 26 XCTest tests.
-All 116 Python tests passed. Shell syntax checks passed for repository scripts,
-and Bash syntax plus ShellCheck passed for the prepared local Google wizard.
-A universal development candidate built and passed strict ad-hoc signature
-verification. Its actual Google credentials and production signing are absent.
-Further review fixes are verified separately before the final merged revision.
+At source revision `8b746fa`, all 210 Swift test functions passed: 89 core
+Swift Testing tests, 93 app Swift Testing tests and 28 XCTest tests. All 116
+Python tests passed. Shell syntax checks passed for repository scripts, and
+Bash syntax plus ShellCheck passed for the prepared local Google wizard.
+
+| Check | Result |
+| --- | --- |
+| Development candidate | Universal release candidate 0.2.0, build 20261003; strict ad-hoc signature verification passed |
+| Architectures and minimum OS | arm64 and x86_64 slices; both Mach-O headers declare macOS 13.0 |
+| Archive | Recorded ZIP SHA-256 matched; extracted signature verified |
+| Detached copy diagnostics | 19 isolated packaged copy checks passed while the entire `.build` directory was unavailable |
+| Detached launch | English, German and French fallback demo processes remained running without `.build` resources |
+| Direct compilation | Swift 6 typechecks passed for arm64 and x86_64 at macOS 13 with Sparkle 2.10.0 |
+| Privacy manifest | Embedded file timestamp and elapsed-time declarations validated; no tracking or developer-collected data declared |
+
+The detached diagnostic uses two synthetic databases and private sandbox
+fixtures. It covers newest backups, initial copies, unchanged inode preservation,
+per-database overrides, restoring changed copies, newer replacements, empty
+backup preservation and ASCII/Unicode filename collisions. It does not exercise
+login, wake, real folder grants or cloud accounts. All diagnostic processes and
+extracted apps were removed; build resources were restored afterward.
 
 ## Verified behavior
 
@@ -65,7 +80,11 @@ lifecycle and current-result defects. Focused failing fixtures preceded their
 fixes, including updater cancellation during quit, unchecked restored cloud
 confirmation, an unchanged existing local copy, replaced connection-cancellation
 ownership, stale recovery wording, deferred credential cleanup and unowned
-startup cleanup. GitHub Codex reviews are requested only after current CI passes.
+startup cleanup, staged-credential rollback journaling, directory durability
+before credential deletion and already scheduled notification cancellation.
+Each verified defect has a focused regression test. The last local full Codex
+run was interrupted by its usage limit and is not counted as completed. GitHub
+Codex reviews are requested only after current CI passes.
 Greptile and Bugbot remain disabled.
 
 ## Remaining coverage
