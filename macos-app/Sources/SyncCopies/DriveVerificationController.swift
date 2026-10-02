@@ -522,8 +522,11 @@ final class DriveVerificationController: ObservableObject {
                 return event.confirmed != confirmed
             }
         }
+        let obsoleteRecoveryWasQueued = record.pending.contains { event in
+            event.kind == .recovery && obsolete.contains(where: { $0.id == event.id })
+        }
         record.pending.removeAll { event in obsolete.contains(where: { $0.id == event.id }) }
-        if obsolete.contains(where: { $0.kind == .recovery }) {
+        if obsoleteRecoveryWasQueued {
             // Retry a recovery using its current confirmation fact, never the old queued wording.
             switch state.status {
             case .error: break

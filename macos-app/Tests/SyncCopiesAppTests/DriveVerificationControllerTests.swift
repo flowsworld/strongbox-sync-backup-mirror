@@ -576,6 +576,23 @@ struct DriveVerificationControllerTests {
         #expect(fixture.delivered.map(\.kind) == [.confirmed])
     }
 
+    @Test func scheduledRecoveryCannotBecomeAnotherRecoveryAfterConfirmation() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        await fixture.server.set(remote: nil, problem: .providerUnavailable)
+        let controller = fixture.controller()
+        try await fixture.bind(controller)
+        await fixture.server.set(remote: nil)
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(fixture.delivered.map(\.kind) == [.error, .recovery])
+        await fixture.server.set(remote: try fixture.matching())
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(controller.results[fixture.id]?.status == .confirmed)
+        #expect(fixture.delivered.map(\.kind) == [.error, .recovery])
+    }
+
     enum ScheduledCancellation: CaseIterable { case database, preferences, account, content, error }
 
     @Test(arguments: ScheduledCancellation.allCases)

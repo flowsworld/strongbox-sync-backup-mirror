@@ -167,6 +167,7 @@ actor GoogleDriveAccounts {
     private let credentials: GoogleDriveCredentialStore
     private let transport: GoogleDriveTransport
     private let clock: @Sendable () -> TimeInterval
+    private let synchronizeDirectory: (@Sendable (URL) throws -> Void)?
     private var mutationActive = false
     private var cachedTokens: [String: GoogleDriveOAuthTokens] = [:]
     private struct Refresh {
@@ -176,12 +177,14 @@ actor GoogleDriveAccounts {
     private var refreshes: [UUID: Refresh] = [:]
 
     init(registryURL: URL, client: GoogleDriveOAuthClient, credentials: GoogleDriveCredentialStore,
-         transport: GoogleDriveTransport, clock: @escaping @Sendable () -> TimeInterval = { Date().timeIntervalSince1970 }) {
+         transport: GoogleDriveTransport, clock: @escaping @Sendable () -> TimeInterval = { Date().timeIntervalSince1970 },
+         synchronizeDirectory: (@Sendable (URL) throws -> Void)? = nil) {
         self.registryURL = registryURL
         self.client = client
         self.credentials = credentials
         self.transport = transport
         self.clock = clock
+        self.synchronizeDirectory = synchronizeDirectory
     }
 
     /// Listing retries deferred removal after Keychain access becomes available.
@@ -419,6 +422,7 @@ actor GoogleDriveAccounts {
     }
 
     private func syncRegistryDirectory() throws {
+        if let synchronizeDirectory { try synchronizeDirectory(registryURL.deletingLastPathComponent()); return }
         let descriptor = open(registryURL.deletingLastPathComponent().path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         guard descriptor >= 0 else { throw GoogleDriveAccountFailure.registryUnavailable }
         defer { close(descriptor) }
@@ -427,6 +431,11 @@ actor GoogleDriveAccounts {
 
     /// Failed deletion remains recorded by opaque ID for another attempt, without retaining tokens in settings.
     private func cleanup(_ registry: inout Registry) async -> Bool {
+        guard !registry.pendingRemovals.isEmpty else { return false }
+        // A failed sync leaves the logical commit intact and all credentials
+        // available. Retry only after its registry rename is durable.
+        do { try syncRegistryDirectory() }
+        catch { return true }
         var remaining: [UUID] = []
         for id in registry.pendingRemovals {
             do { try await credentials.remove(id) }

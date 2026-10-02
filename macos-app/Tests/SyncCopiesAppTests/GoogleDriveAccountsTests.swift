@@ -20,6 +20,45 @@ final class GoogleDriveAccountsTests: XCTestCase {
         return try GoogleDriveOAuthTokens.decodeResponse(data, receivedAt: age)
     }
 
+    func testCommittedRegistryMustBeDurableBeforeRemovingPreviousCredentials() async throws {
+        for disconnect in [false, true] {
+            let directory = try directory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let registry = directory.appendingPathComponent("accounts.json")
+            let keychain = DriveCredentialFixture()
+            let sync = RegistryDirectorySyncFixture()
+            let transport = DriveHTTPFixture(outcomes: []).transport
+            let accounts = GoogleDriveAccounts(registryURL: registry, client: try client(), credentials: keychain.store,
+                                              transport: transport, synchronizeDirectory: { try sync.synchronize($0) })
+            let previous = try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111"), tokens: tokens())
+            sync.failAfter(successes: disconnect ? 0 : 1)
+            var active: [GoogleDriveAccount] = []
+            if disconnect {
+                let result = try await accounts.disconnect(accountID: previous.account.id)
+                XCTAssertTrue(result.cleanupPending)
+            } else {
+                let result = try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111"), tokens: tokens(refresh: "new-refresh"))
+                XCTAssertTrue(result.cleanupPending)
+                active = [result.account]
+            }
+            let retained = await keychain.snapshot()
+            XCTAssertNotNil(retained[previous.account.credentialID])
+            for account in active { XCTAssertNotNil(retained[account.credentialID]) }
+            let reopened = GoogleDriveAccounts(registryURL: registry, client: try client(), credentials: keychain.store,
+                                              transport: transport, synchronizeDirectory: { try sync.synchronize($0) })
+            let listed = try await reopened.list()
+            XCTAssertEqual(listed, active)
+            let stillRetained = await keychain.snapshot()
+            XCTAssertNotNil(stillRetained[previous.account.credentialID])
+            sync.allow()
+            let cleaned = try await reopened.list()
+            XCTAssertEqual(cleaned, active)
+            let remaining = await keychain.snapshot()
+            XCTAssertNil(remaining[previous.account.credentialID])
+            XCTAssertEqual(Set(remaining.keys), Set(active.map(\.credentialID)))
+        }
+    }
+
     func testMultipleAccountsUsePermissionIDsAndPersistOnlyLabelsAndCredentialReferences() async throws {
         let directory = try directory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -396,4 +435,18 @@ actor DriveCredentialFixture {
     func suspendNextRemoval() { shouldSuspendRemoval = true }
     func releaseRemoval() { removalContinuation?.resume(); removalContinuation = nil }
     func snapshot() -> [UUID: Data] { values }
+}
+
+private final class RegistryDirectorySyncFixture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var successesRemaining: Int?
+    func failAfter(successes: Int) { lock.withLock { successesRemaining = successes } }
+    func allow() { lock.withLock { successesRemaining = nil } }
+    func synchronize(_ directory: URL) throws {
+        try lock.withLock {
+            guard let remaining = successesRemaining else { return }
+            guard remaining > 0 else { throw GoogleDriveAccountFailure.registryUnavailable }
+            successesRemaining = remaining - 1
+        }
+    }
 }
