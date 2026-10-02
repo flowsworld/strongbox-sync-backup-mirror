@@ -217,9 +217,40 @@ final class GoogleDriveAccountsTests: XCTestCase {
                                           transport: DriveHTTPFixture(outcomes: []).transport)
         do { _ = try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111"), tokens: tokens()); XCTFail("Expected credential error") }
         catch { XCTAssertEqual(error as? GoogleDriveAccountFailure, .credentialsUnavailable) }
-        XCTAssertFalse(FileManager.default.fileExists(atPath: registry.path))
+        let active = try await accounts.list()
+        XCTAssertTrue(active.isEmpty)
+        let pending = try await accounts.hasPendingCleanup()
+        XCTAssertFalse(pending)
         let secrets = await keychain.snapshot()
         XCTAssertTrue(secrets.isEmpty)
+    }
+
+    func testFailedStagedCredentialRollbackRemainsTrackedForCleanupAfterRestart() async throws {
+        let directory = try directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let keychain = DriveCredentialFixture()
+        let registry = directory.appendingPathComponent("accounts.json")
+        let transport = DriveHTTPFixture(outcomes: []).transport
+        let accounts = GoogleDriveAccounts(registryURL: registry, client: try client(), credentials: keychain.store,
+                                          transport: transport)
+        let previous = try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111"), tokens: tokens())
+        await keychain.failAddAfterWrite(true)
+        await keychain.failRemoval(true)
+        do {
+            _ = try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111"), tokens: tokens(refresh: "replacement"))
+            XCTFail("Expected failed rollback")
+        } catch { XCTAssertEqual(error as? GoogleDriveAccountFailure, .rollbackFailed) }
+        let failedCredentials = await keychain.snapshot()
+        XCTAssertEqual(failedCredentials.count, 2)
+        let pending = try await accounts.hasPendingCleanup()
+        XCTAssertTrue(pending, "Failed staged credential removal must remain durably tracked")
+        await keychain.failRemoval(false)
+        let reopened = GoogleDriveAccounts(registryURL: registry, client: try client(), credentials: keychain.store,
+                                          transport: transport)
+        let active = try await reopened.list()
+        XCTAssertEqual(active, [previous.account])
+        let remaining = await keychain.snapshot()
+        XCTAssertEqual(Set(remaining.keys), [previous.account.credentialID])
     }
 
     func testCancelledReconnectPreservesPreviousAccountAndRemovesStagedCredential() async throws {
@@ -230,18 +261,26 @@ final class GoogleDriveAccountsTests: XCTestCase {
         let accounts = GoogleDriveAccounts(registryURL: registry, client: try client(), credentials: keychain.store,
                                           transport: DriveHTTPFixture(outcomes: []).transport)
         let previous = try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111"), tokens: tokens())
-        let savedRegistry = try Data(contentsOf: registry)
         await keychain.suspendNextAdd()
         let reconnect = Task { try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111"), tokens: tokens(refresh: "replacement")) }
         let deadline = Date().addingTimeInterval(2)
         while !(await keychain.isAddSuspended), Date() < deadline { try await Task.sleep(for: .milliseconds(1)) }
         let suspended = await keychain.isAddSuspended
         XCTAssertTrue(suspended)
+        let journal = try String(contentsOf: registry, encoding: .utf8)
+        let staged = Set((await keychain.snapshot()).keys).subtracting([previous.account.credentialID])
+        XCTAssertEqual(staged.count, 1)
+        XCTAssertTrue(journal.contains(try XCTUnwrap(staged.first).uuidString))
+        let pendingDuringAdd = try await accounts.hasPendingCleanup()
+        XCTAssertTrue(pendingDuringAdd)
         reconnect.cancel()
         await keychain.releaseAdd()
         do { _ = try await reconnect.value; XCTFail("Cancelled reconnect committed") }
         catch { XCTAssertTrue(error is CancellationError) }
-        XCTAssertEqual(try Data(contentsOf: registry), savedRegistry)
+        let active = try await accounts.list()
+        XCTAssertEqual(active, [previous.account])
+        let pendingAfterRollback = try await accounts.hasPendingCleanup()
+        XCTAssertFalse(pendingAfterRollback)
         let credentials = await keychain.snapshot()
         XCTAssertEqual(Set(credentials.keys), [previous.account.credentialID])
     }

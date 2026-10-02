@@ -136,3 +136,13 @@ Automated tests must use synthetic metadata/files and a fake credential store. N
 The native implementation is wired into the running app, using a separate Keychain service and registry. Builds require explicit Desktop client configuration; absent configuration and previews have no provider effects. The safe configuration parser accepts only three native keys, never executes shell text and rejects symlinks, oversized files and FIFOs. [Setup instructions](../manual/native-google-setup.md) describe the prepared local wizard.
 
 Flo confirmed that no Google project or Apple signing account exists and requested preparation. No real credentials were loaded, no Google account changes were made and no actual provider validation ran. Issue #9 remains open for signed Keychain/browser integration and actual synthetic Drive validation. Automated tests use injected provider, credential, callback and notification boundaries; they do not establish production account access.
+
+## Native readiness timer privacy declaration
+
+The native readiness probe uses `ProcessInfo.systemUptime` only to bound elapsed
+waiting time on the Mac. The privacy manifest declares
+`NSPrivacyAccessedAPICategorySystemBootTime` with reason `35F9.1`. Boot-time values
+and derived timing are not added to provider or update requests. This follows
+Apple's elapsed-time/timer reason. Checked on 2026-10-03 against
+[Apple's required-reason API inventory](https://developer.apple.com/documentation/bundleresources/app-privacy-configuration/nsprivacyaccessedapitypes/nsprivacyaccessedapitype)
+and [systemUptime documentation](https://developer.apple.com/documentation/foundation/processinfo/systemuptime).

@@ -39,7 +39,7 @@ struct DriveNotificationPreferences: Codable, Equatable, Sendable {
 }
 
 struct DriveVerificationEvent: Codable, Equatable, Identifiable, Sendable {
-    enum Kind: String, Codable, Sendable { case error, overdue, recovery, confirmed }
+    enum Kind: String, Codable, Hashable, Sendable { case error, overdue, recovery, confirmed }
     let id: UUID
     let databaseID: UUID
     let databaseName: String
@@ -136,6 +136,9 @@ final class DriveVerificationController: ObservableObject {
         let sha256: String
     }
     private var validatedCopies: [UUID: CurrentCopy] = [:]
+    // Successful enqueue removes the retry record before the OS displays its
+    // delayed request. Keep bounded cancellation ownership until invalidated.
+    private var scheduledAlerts: [UUID: [DriveVerificationEvent.Kind: DriveVerificationEvent]] = [:]
 
     init(settingsURL: URL, environment: DriveVerificationEnvironment?, demo: Bool = false) {
         self.settingsURL = settingsURL
@@ -287,6 +290,7 @@ final class DriveVerificationController: ObservableObject {
         }
         try commit(next)
         if let environment { removed.forEach { environment.cancelNotification($0.id) } }
+        cancelScheduled { !preferences.permits($0.kind) }
     }
 
     /// Parent calls immediately when copy destinations/content or enabled local databases change.
@@ -364,8 +368,19 @@ final class DriveVerificationController: ObservableObject {
         checkTask?.cancel()
         validatedCopies.removeAll()
         results = [:]
+        cancelScheduled { _ in true }
         for record in settings.records.values {
             if let environment { record.pending.forEach { environment.cancelNotification($0.id) } }
+        }
+    }
+
+    private func cancelScheduled(where shouldCancel: (DriveVerificationEvent) -> Bool) {
+        for id in Array(scheduledAlerts.keys) {
+            for event in scheduledAlerts[id]?.values.filter(shouldCancel) ?? [] {
+                environment?.cancelNotification(event.id)
+                scheduledAlerts[id]?.removeValue(forKey: event.kind)
+            }
+            if scheduledAlerts[id]?.isEmpty == true { scheduledAlerts.removeValue(forKey: id) }
         }
     }
 
@@ -392,6 +407,7 @@ final class DriveVerificationController: ObservableObject {
         // An input is present only while its local database and copy selection are enabled.
         let active = Set(inputs.map(\.id))
         activeDatabaseIDs = active
+        cancelScheduled { !active.contains($0.databaseID) }
         publish()
         for input in inputs {
             guard captured == generation, !Task.isCancelled else { return }
@@ -431,13 +447,17 @@ final class DriveVerificationController: ObservableObject {
                     results[input.id] = pending
                     try commit(next)
                     old.forEach { environment.cancelNotification($0.id) }
+                    cancelScheduled { $0.databaseID == input.id }
                 }
                 publish()
                 let remote = try await environment.remoteFile(binding.accountID, binding.folderID, input.filename)
+                let currentAccounts = try await environment.listAccounts()
+                guard captured == generation, !Task.isCancelled else { return }
+                guard currentAccounts == accounts else { localCopiesChanged(); requestCheck(); return }
+                // Account cleanup may suspend. Validate the held local file only
+                // after that lookup, immediately before publishing the observation.
                 try await snapshot.validate()
                 guard captured == generation, !Task.isCancelled else { return }
-                let currentAccounts = try await environment.listAccounts()
-                guard currentAccounts == accounts else { localCopiesChanged(); requestCheck(); return }
                 await recordResult(id: input.id, name: input.name, context: context, local: snapshot.fingerprint,
                                    outcome: remote.map(UploadCheckOutcome.file) ?? .missing, generation: captured)
             } catch {
@@ -489,7 +509,8 @@ final class DriveVerificationController: ObservableObject {
             record.overdueKey = nil
         }
         // An alert queued during an older status must never appear after recovery or new content.
-        let obsolete = record.pending.filter { event in
+        let scheduled = scheduledAlerts[id].map { Array($0.values) } ?? []
+        let obsolete = (record.pending + scheduled).filter { event in
             switch event.kind {
             case .error:
                 if case .error(let current) = state.status { return event.problem != current }
@@ -525,6 +546,7 @@ final class DriveVerificationController: ObservableObject {
         do { try commit(next) }
         catch { failure = .settingsUnavailable; return }
         obsolete.forEach { environment.cancelNotification($0.id) }
+        cancelScheduled { event in obsolete.contains(where: { $0.id == event.id }) }
         if let event { environment.history(event) }
         await deliverPending(id: id, generation: captured)
     }
@@ -534,8 +556,14 @@ final class DriveVerificationController: ObservableObject {
         for event in settings.records[id]?.pending ?? [] {
             guard captured == generation, !Task.isCancelled else { return }
             do {
-                _ = try await environment.deliver(event)
+                let delivery = try await environment.deliver(event)
                 guard captured == generation, !Task.isCancelled else { environment.cancelNotification(event.id); return }
+                if delivery == .delivered {
+                    if let previous = scheduledAlerts[id]?[event.kind], previous.id != event.id {
+                        environment.cancelNotification(previous.id)
+                    }
+                    scheduledAlerts[id, default: [:]][event.kind] = event
+                }
                 // Permission denial consumes the event too. It must not be replayed after later authorization.
                 var next = settings
                 next.records[id]?.pending.removeAll { $0.id == event.id }

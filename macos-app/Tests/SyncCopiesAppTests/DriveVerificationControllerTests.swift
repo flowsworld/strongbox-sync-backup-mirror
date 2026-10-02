@@ -576,6 +576,35 @@ struct DriveVerificationControllerTests {
         #expect(fixture.delivered.map(\.kind) == [.confirmed])
     }
 
+    enum ScheduledCancellation: CaseIterable { case database, preferences, account, content, error }
+
+    @Test(arguments: ScheduledCancellation.allCases)
+    func completedEnqueueRemainsCancellable(action: ScheduledCancellation) async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        await fixture.server.set(remote: try fixture.matching())
+        let controller = fixture.controller()
+        var preferences = DriveNotificationPreferences()
+        preferences.confirmed = true
+        try controller.setPreferences(preferences)
+        try await fixture.bind(controller)
+        let event = try #require(fixture.delivered.first)
+        #expect(event.kind == .confirmed)
+        switch action {
+        case .database: try controller.disable(databaseID: fixture.id)
+        case .preferences:
+            preferences.confirmed = false
+            try controller.setPreferences(preferences)
+        case .account: try await controller.disconnect(accountID: (await fixture.server.accounts())[0].id)
+        case .content: controller.localCopiesChanged()
+        case .error:
+            await fixture.server.set(remote: nil, problem: .providerUnavailable)
+            controller.requestCheck()
+            try await fixture.settle(controller)
+        }
+        #expect(fixture.cancelled.contains(event.id))
+    }
+
     @Test func disableCancelsPersistedAlertsAndQuiesceCanResume() async throws {
         let fixture = try DriveControllerFixture()
         defer { fixture.remove() }

@@ -198,7 +198,7 @@ actor GoogleDriveAccounts {
 
     func hasPendingCleanup() throws -> Bool { try !loadRegistry().pendingRemovals.isEmpty }
 
-    /// New credentials are staged before the registry changes. Reconnecting preserves the stable account ID.
+    /// Journal new credential IDs before staging secrets. Reconnecting preserves the stable account ID.
     func save(identity: GoogleDriveIdentity, tokens: GoogleDriveOAuthTokens) async throws -> GoogleDriveAccountSave {
         try Task.checkCancellation()
         guard !mutationActive else { throw GoogleDriveAccountFailure.busy }
@@ -208,15 +208,26 @@ actor GoogleDriveAccounts {
         let previous = registry.accounts.first { $0.drivePermissionID == identity.drivePermissionID }
         let account = GoogleDriveAccount(identity: identity, credentialID: UUID())
         let payload = StoredCredentials(clientID: client.clientID, drivePermissionID: identity.drivePermissionID, refreshToken: tokens.refreshToken)
+        registry.pendingRemovals.append(account.credentialID)
+        try saveRegistry(registry)
+        // Persist the journal's rename before a secret can exist outside the registry.
+        try syncRegistryDirectory()
         do {
             try await credentials.add(account.credentialID, JSONEncoder().encode(payload))
             try Task.checkCancellation()
-            registry.accounts.removeAll { $0.id == account.id }
-            registry.accounts.append(account)
-            if let previous { registry.pendingRemovals.append(previous.credentialID) }
-            try saveRegistry(registry)
+            var committed = registry
+            committed.accounts.removeAll { $0.id == account.id }
+            committed.accounts.append(account)
+            committed.pendingRemovals.removeAll { $0 == account.credentialID }
+            if let previous { committed.pendingRemovals.append(previous.credentialID) }
+            try saveRegistry(committed)
+            registry = committed
         } catch {
-            do { try await credentials.remove(account.credentialID) }
+            do {
+                try await credentials.remove(account.credentialID)
+                registry.pendingRemovals.removeAll { $0 == account.credentialID }
+                try saveRegistry(registry)
+            }
             catch { throw GoogleDriveAccountFailure.rollbackFailed }
             throw error
         }
@@ -405,6 +416,13 @@ actor GoogleDriveAccounts {
             guard fsync(descriptor) == 0, rename(temporary, registryURL.path) == 0 else { throw GoogleDriveAccountFailure.registryUnavailable }
         } catch let error as GoogleDriveAccountFailure { throw error }
         catch { throw GoogleDriveAccountFailure.registryUnavailable }
+    }
+
+    private func syncRegistryDirectory() throws {
+        let descriptor = open(registryURL.deletingLastPathComponent().path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard descriptor >= 0 else { throw GoogleDriveAccountFailure.registryUnavailable }
+        defer { close(descriptor) }
+        guard fsync(descriptor) == 0 else { throw GoogleDriveAccountFailure.registryUnavailable }
     }
 
     /// Failed deletion remains recorded by opaque ID for another attempt, without retaining tokens in settings.
