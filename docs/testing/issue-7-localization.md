@@ -27,7 +27,9 @@ IDs, dates or notification choices. Fixed old messages map to resource keys;
 opaque OS descriptions retain the full original text with an explicit
 original-language label. Database names and filenames remain user data.
 
-The C1 arrangement and the meaning of its copy disclaimer are preserved.
+The C1 arrangement and the meaning of its copy disclaimer are preserved. The
+final change is based on #5's merged copy/recovery implementation, including its
+General-only source/common-target controls, full paths and copy-details button.
 
 ## Local evidence
 
@@ -47,8 +49,10 @@ No daily-use source, destination, LaunchAgent or helper configuration changed.
   These launch arguments do not write system language settings.
 - Native screenshots and accessibility trees were collected for all five pages
   in both languages. The local-copy warning was readable in the database page.
-  English at the minimum window size used wrapping and scrolling rather than
-  cutting off its disclaimer. Copy-details disclosure was operable through AX.
+  Both languages at the minimum window size used wrapping and scrolling rather
+  than cutting off their disclaimers. AppleScript operated the whole-row
+  copy-details button; its AX value changed from collapsed to expanded, and the
+  revealed dates and labels used the selected language.
 - The accessibility tree included localized sidebar rows, checkbox/button labels,
   status-menu items, the status-item description and rendered history messages.
   Native role descriptions followed the selected app language as well.
@@ -58,12 +62,23 @@ No daily-use source, destination, LaunchAgent or helper configuration changed.
 
 The Computer Use transport failed with `native pipe closed before response`.
 Direct native accessibility inspection and AppleScript remained available.
-Screen-reader evidence covers the actual AX text, roles and available actions;
-no complete spoken VoiceOver session or older-macOS UI session was recorded.
+VoiceOver was started through its native first-use dialog and a navigation
+command was issued in the isolated app. Its spoken output could not be read
+through AppleScript. VoiceOver was switched off again, and its original disabled
+preference and absence of running processes were verified. Screen-reader
+evidence covers the actual AX text, roles and available actions; no complete
+spoken VoiceOver session or older-macOS UI session was recorded.
 
 ## Automated checks
 
 The CI workflow runs the native Swift tests and builds/verifies the signed app,
 in addition to the existing Python/helper tests. The build verifies resource
-packaging through the runnable app and its ad-hoc signature. The final local
-suite counts and review outcomes are recorded in the PR.
+packaging through the runnable app and its ad-hoc signature. The final local run
+passed all 69 Swift tests and all 107 Python tests. A release build and signature
+verification passed. Both resource sets contain 166 matching keys and matching
+format placeholders.
+
+Independent standards and specification reviews covered the final diff after
+integration with #5. Resource parsing now reports errors, an unused identity API
+was removed, and two redundant nested resource lookups were simplified. The
+specification review found no source defects. No findings were dismissed.

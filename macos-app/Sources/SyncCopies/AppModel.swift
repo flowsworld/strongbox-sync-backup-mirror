@@ -11,7 +11,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .general: L10n.text("General")
         case .databases: L10n.text("Databases")
         case .notifications: L10n.text("Notifications")
-        case .googleDrive: L10n.text(L10n.text("Google Drive"))
+        case .googleDrive: L10n.text("Google Drive")
         case .history: L10n.text("History")
         }
     }
