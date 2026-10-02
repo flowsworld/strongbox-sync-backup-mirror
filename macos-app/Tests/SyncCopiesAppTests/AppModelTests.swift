@@ -85,6 +85,13 @@ private final class SimulatedGrant: @unchecked Sendable {
     func setRevoked(_ value: Bool) { lock.withLock { revoked = value } }
 }
 
+private final class ScanPhase: @unchecked Sendable {
+    private let lock = NSLock()
+    private var started = false
+    var hasStarted: Bool { lock.withLock { started } }
+    func start() { lock.withLock { started = true } }
+}
+
 private final class SimulatedMounts: @unchecked Sendable {
     private let lock = NSLock()
     private var mounts: [FolderPathDisplay.Mount]
@@ -106,6 +113,49 @@ private final class ResolutionGate: @unchecked Sendable {
 
 @MainActor
 struct AppModelTests {
+    @Test func wrongSavedSourceAllowsCorrectionAndPreservesExistingCopy() async throws {
+        let fixture = try ModelFixture()
+        let target = fixture.common.appendingPathComponent(fixture.first.filename)
+        try Data("previous encrypted copy".utf8).write(to: target)
+        let base = fixture.environment()
+        let resolve = base.resolveFolder
+        let environment = AppEnvironment(preferencesURL: base.preferencesURL, resolveFolder: { data in
+            if data == Data("source".utf8) { return FolderAccess(url: fixture.common) }
+            return try resolve(data)
+        }, scheduler: base.scheduler, notifications: nil, loginStatus: base.loginStatus, setLogin: base.setLogin)
+        let model = AppModel(environment: environment)
+        try await settled(model)
+        #expect(model.sourceReadStatus == .unconfirmed)
+        #expect(model.canChooseSource)
+        #expect(try Data(contentsOf: target) == Data("previous encrypted copy".utf8))
+        await model.shutdown()
+    }
+
+    @Test func disappearingDestinationDoesNotBlockHealthyDatabase() async throws {
+        let fixture = try ModelFixture()
+        let phase = ScanPhase()
+        let base = fixture.environment()
+        let resolve = base.resolveFolder
+        let environment = AppEnvironment(preferencesURL: base.preferencesURL, resolveFolder: { data in
+            if data == Data("source".utf8) { phase.start() }
+            if data == Data("override".utf8), phase.hasStarted,
+               FileManager.default.fileExists(atPath: fixture.common.path) {
+                try FileManager.default.removeItem(at: fixture.common)
+            }
+            return try resolve(data)
+        }, scheduler: base.scheduler, notifications: nil, loginStatus: base.loginStatus, setLogin: base.setLogin)
+        let model = AppModel(environment: environment)
+        try await settled(model)
+        #expect(model.sourceReadStatus == .available)
+        #expect(model.states[fixture.first.id]?.error != nil)
+        #expect(model.preference(for: fixture.second).lastCopied != nil)
+        #expect(model.states[fixture.second.id]?.error == nil)
+        #expect(model.preferences.globalFailure == nil)
+        let target = fixture.override.appendingPathComponent(fixture.second.filename)
+        #expect(try Data(contentsOf: target) == Data("second encrypted fixture".utf8))
+        await model.shutdown()
+    }
+
     private func settled(_ model: AppModel) async throws {
         for _ in 0..<400 {
             if !model.isChecking { return }
@@ -213,18 +263,18 @@ struct AppModelTests {
         await model.shutdown()
     }
 
-    @Test func missingMetadataDoesNotRequestPermissionRenewal() async throws {
+    @Test func missingMetadataAllowsManualSourceCorrection() async throws {
         let fixture = try ModelFixture()
         try FileManager.default.removeItem(at: fixture.source.appendingPathComponent("Library/Preferences/group.strongbox.mac.mcguill.plist"))
         let model = AppModel(environment: fixture.environment())
         try await settled(model)
         #expect(model.problem != nil)
         #expect(model.sourceReadStatus == .unconfirmed)
-        #expect(!model.canChooseSource)
+        #expect(model.canChooseSource)
         await model.shutdown()
     }
 
-    @Test func transientSourceFailureDoesNotRequestPermissionRenewal() async throws {
+    @Test func transientSourceFailureAllowsManualSourceCorrection() async throws {
         let fixture = try ModelFixture()
         let base = fixture.environment()
         let resolve = base.resolveFolder
@@ -236,7 +286,7 @@ struct AppModelTests {
         try await settled(model)
         #expect(model.problem == MirrorError.changedFile.localizedDescription)
         #expect(model.sourceReadStatus == .unconfirmed)
-        #expect(!model.canChooseSource)
+        #expect(model.canChooseSource)
         await model.shutdown()
     }
 

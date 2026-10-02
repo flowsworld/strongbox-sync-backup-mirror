@@ -214,7 +214,7 @@ final class AppModel: ObservableObject {
     var sourceGranted: Bool { isDemo || preferences.source != nil }
     var commonTargetName: String { isDemo ? "/Users/Beispiel/Google Drive/Lesekopien" : label(for: preferences.defaultTarget) }
     var sourceFolderPath: String { isDemo ? "/Users/Beispiel/Library/Group Containers/group.strongbox.mac.mcguill" : label(for: preferences.source) }
-    var canChooseSource: Bool { !isDemo && !isChecking && !isStopping && !loadFailed && [.notGranted, .unavailable].contains(sourceReadStatus) }
+    var canChooseSource: Bool { !isDemo && !isChecking && !isStopping && !loadFailed && [.notGranted, .unavailable, .unconfirmed].contains(sourceReadStatus) }
     func targetFolderPath(for database: Database) -> String {
         if isDemo { return states[database.id]?.targetName ?? commonTargetName }
         return label(for: preference(for: database).target ?? preferences.defaultTarget)
@@ -531,7 +531,9 @@ final class AppModel: ObservableObject {
                 states[database.id] = DatabaseState(checked: Date(), error: LocalizedMessage.from(error))
             }
         }
-        let conflicts = try DestinationPlanner.conflictingDatabaseIDs(destinations, sourceRoot: source.url)
+        let conflicts = try DestinationPlanner.conflictingDatabaseIDs(destinations, sourceRoot: source.url) { destination, error in
+            states[destination.databaseID] = DatabaseState(checked: Date(), targetName: targetNames[destination.databaseID], error: LocalizedMessage.from(error))
+        }
         for database in active {
             guard states[database.id] == nil else { continue }
             if conflicts.contains(database.id) {
