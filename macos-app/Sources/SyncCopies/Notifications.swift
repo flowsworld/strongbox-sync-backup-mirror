@@ -28,6 +28,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         let center = UNUserNotificationCenter.current()
         self.init(operations: NotificationOperations(
             authorization: {
+                // Extract the Sendable enum in Apple's callback for older macOS SDKs.
                 await withCheckedContinuation { continuation in
                     center.getNotificationSettings { @Sendable settings in
                         continuation.resume(returning: settings.authorizationStatus)
@@ -73,7 +74,11 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         guard allowed else { throw FolderPermissionError.notificationsDenied }
     }
 
-    func send(title: String, body: String, databaseID: String?, kind: WritableKeyPath<NotificationPreferences, Bool>? = nil, isCurrent: () -> Bool = { true }) async throws {
+    func send(
+        title: String, body: String, databaseID: String?,
+        kind: WritableKeyPath<NotificationPreferences, Bool>? = nil,
+        isCurrent: () -> Bool = { true }
+    ) async throws {
         let prefix: String
         if let kind {
             prefix = prefixes[kind] ?? UUID().uuidString + ":"
