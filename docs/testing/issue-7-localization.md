@@ -64,10 +64,11 @@ The Computer Use transport failed with `native pipe closed before response`.
 Direct native accessibility inspection and AppleScript remained available.
 VoiceOver was started through its native first-use dialog and a navigation
 command was issued in the isolated app. Its spoken output could not be read
-through AppleScript. VoiceOver was switched off again, and its original disabled
+through AppleScript. Flo heard the spoken output during this session and
+confirmed it was satisfactory. VoiceOver was switched off again, and its original disabled
 preference and absence of running processes were verified. Screen-reader
-evidence covers the actual AX text, roles and available actions; no complete
-spoken VoiceOver session or older-macOS UI session was recorded.
+evidence covers the actual AX text, roles and available actions together with
+Flo's listening check. No spoken recording or older-macOS UI session was made.
 
 ## Automated checks
 
