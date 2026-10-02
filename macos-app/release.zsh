@@ -29,6 +29,9 @@ case "$channel" in
         [[ "$identity" == 'Developer ID Application: '* || "$identity" == [0-9A-Fa-f](#c40) ]] || {
             print -u2 'Use a Developer ID Application certificate name or its SHA-1 identity.'; exit 2
         }
+        if [[ "$identity" == [0-9A-Fa-f](#c40) ]]; then
+            identity="${identity:u}"
+        fi
         [[ "$identities" == *"$identity"* ]] || {
             print -u2 'The requested signing identity is unavailable.'; exit 1
         }

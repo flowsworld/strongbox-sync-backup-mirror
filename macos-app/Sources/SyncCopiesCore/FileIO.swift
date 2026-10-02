@@ -46,7 +46,17 @@ public enum MirrorError: Error, LocalizedError, LocalizedMessageError, Equatable
 /// Conservative identity for a destination name, including Unicode case equivalents
 /// that collide on the usual case-insensitive macOS volumes.
 public func normalizedDestinationName(_ filename: String) -> String {
-    filename.folding(options: [.caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+    // HFS+ FastUnicodeCompare drops these characters entirely. Keep the
+    // collision key conservative across supported destination filesystems.
+    // Apple's table: apple-oss-distributions/hfs, dfalib/CaseFolding.h.
+    let significant = filename.unicodeScalars.filter { scalar in
+        switch scalar.value {
+        case 0x200C...0x200F, 0x202A...0x202E, 0x206A...0x206F, 0xFEFF: false
+        default: true
+        }
+    }
+    return String(String.UnicodeScalarView(significant))
+        .folding(options: [.caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
         .precomposedStringWithCanonicalMapping
 }
 

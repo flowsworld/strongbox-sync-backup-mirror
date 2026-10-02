@@ -24,7 +24,7 @@ struct DestinationTests {
         defer { try! FileManager.default.removeItem(at: root) }
         let source = try directory("source")
         let target = try directory("target")
-        let pairs = [("A.kdbx", "a.kdbx"), ("Σ.kdbx", "ς.kdbx"), ("Straße.kdbx", "STRASSE.kdbx"), ("é.kdbx", "e\u{301}.kdbx")]
+        let pairs = [("A.kdbx", "a.kdbx"), ("Σ.kdbx", "ς.kdbx"), ("Straße.kdbx", "STRASSE.kdbx"), ("é.kdbx", "e\u{301}.kdbx"), ("database.kdbx", "data\u{200C}base.kdbx"), ("database.kdbx", "data\u{202E}base.kdbx"), ("database.kdbx", "data\u{FEFF}base.kdbx")]
         for (first, second) in pairs {
             let ids = [UUID(), UUID(), UUID()]
             let destinations = [CopyDestination(databaseID: ids[0], directory: target, filename: first),
