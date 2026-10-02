@@ -199,7 +199,7 @@ struct NotificationTests {
         model.refresh()
         try await eventually { !model.isChecking }
         #expect(recorder.requests.isEmpty)
-        #expect(model.notificationStatus.contains("nicht erlaubt"))
+        #expect(model.notificationStatus == FolderPermissionError.notificationsDenied.localizedDescription)
         recorder.authorization = .provisional
         await model.updateNotificationStatus()
         model.refresh()
