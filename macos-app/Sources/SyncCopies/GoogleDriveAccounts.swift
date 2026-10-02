@@ -173,6 +173,7 @@ actor GoogleDriveAccounts {
     private struct Refresh {
         let id: UUID
         let task: Task<GoogleDriveOAuthTokens, any Error>
+        var waiters: Int
     }
     private var refreshes: [UUID: Refresh] = [:]
 
@@ -280,8 +281,11 @@ actor GoogleDriveAccounts {
         guard now.isFinite, now >= 0 else { throw GoogleDriveAccountFailure.credentialsInvalid }
         if let tokens = cachedTokens[accountID], tokens.expiresAt > now + 30 { return tokens.accessToken }
         let refresh: Refresh
-        if let existing = refreshes[account.credentialID] { refresh = existing }
-        else {
+        if var existing = refreshes[account.credentialID] {
+            existing.waiters += 1
+            refreshes[account.credentialID] = existing
+            refresh = existing
+        } else {
             let client = self.client, transport = self.transport, credentials = self.credentials, clock = self.clock
             let task = Task {
                 let data = try await credentials.read(account.credentialID)
@@ -289,14 +293,19 @@ actor GoogleDriveAccounts {
                 let response = try await transport.oauth(client.refreshRequest(refreshToken: stored.refreshToken))
                 return try GoogleDriveOAuthTokens.decodeResponse(response, existingRefreshToken: stored.refreshToken, receivedAt: clock())
             }
-            refresh = Refresh(id: UUID(), task: task)
+            refresh = Refresh(id: UUID(), task: task, waiters: 1)
             refreshes[account.credentialID] = refresh
         }
         defer {
-            if refreshes[account.credentialID]?.id == refresh.id { refreshes.removeValue(forKey: account.credentialID) }
+            if var current = refreshes[account.credentialID], current.id == refresh.id {
+                current.waiters -= 1
+                if current.waiters == 0 { refreshes.removeValue(forKey: account.credentialID) }
+                else { refreshes[account.credentialID] = current }
+            }
         }
-        let task = refresh.task
-        let tokens = try await withTaskCancellationHandler(operation: { try await task.value }, onCancel: { task.cancel() })
+        // A cancelled waiter drains the bounded shared request before returning
+        // cancellation. It cannot cancel another caller's refresh or outlive shutdown.
+        let tokens = try await refresh.task.value
         try requireCurrent(account)
         try Task.checkCancellation()
         let stored = try await loadCredentials(account)

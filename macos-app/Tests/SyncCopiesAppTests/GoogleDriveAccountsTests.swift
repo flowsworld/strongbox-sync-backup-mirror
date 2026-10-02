@@ -344,6 +344,31 @@ final class GoogleDriveAccountsTests: XCTestCase {
         XCTAssertFalse(snapshot.requests.contains { $0.url?.path.contains("new-id") == true })
     }
 
+    func testCancelledRefreshWaiterCannotCancelAnotherWaiter() async throws {
+        let directory = try directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let http = DriveSuspendedHTTPFixture()
+        let accounts = GoogleDriveAccounts(registryURL: directory.appendingPathComponent("accounts.json"), client: try client(),
+                                          credentials: DriveCredentialFixture().store, transport: http.transport, clock: { 3600 })
+        let saved = try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111"), tokens: tokens())
+        let first = Task { try await accounts.accessToken(accountID: saved.account.id) }
+        let second = Task { try await accounts.accessToken(accountID: saved.account.id) }
+        let deadline = Date().addingTimeInterval(2)
+        while await http.count == 0, Date() < deadline { try await Task.sleep(for: .milliseconds(1)) }
+        for _ in 0..<100 { await Task.yield() }
+        first.cancel()
+        for _ in 0..<100 { await Task.yield() }
+        await http.release()
+        do { _ = try await first.value; XCTFail("Cancelled waiter returned an access token") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        do {
+            let token = try await second.value
+            XCTAssertEqual(token, "renewed-access")
+        } catch { XCTFail("The unrelated waiter failed: \(error)") }
+        let requests = await http.count
+        XCTAssertEqual(requests, 1)
+    }
+
     func testConcurrentRefreshesShareOneRequestAndDisconnectCancelsInFlightRefresh() async throws {
         for disconnect in [false, true] {
             let directory = try directory()
