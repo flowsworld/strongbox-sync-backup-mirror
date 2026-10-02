@@ -117,6 +117,7 @@ enum ConfigurationError: LocalizedError, LocalizedMessageError {
 @MainActor
 final class AppModel: ObservableObject {
     let isDemo: Bool
+    let isSetupPreview: Bool
     @Published private(set) var preferences = Preferences()
     @Published private(set) var databases: [Database] = []
     @Published private(set) var states: [UUID: DatabaseState] = [:]
@@ -150,12 +151,18 @@ final class AppModel: ObservableObject {
     private var notificationAttemptRunning = false
     private var notificationRevisions: [WritableKeyPath<NotificationPreferences, Bool>: Int] = [:]
 
-    init(demo: Bool = false, environment suppliedEnvironment: AppEnvironment? = nil, folderMounts: @escaping @Sendable () -> [FolderPathDisplay.Mount] = FolderPathDisplay.mountedSMBFolders) {
+    init(demo: Bool = false, setupPreview: Bool = false, environment suppliedEnvironment: AppEnvironment? = nil, folderMounts: @escaping @Sendable () -> [FolderPathDisplay.Mount] = FolderPathDisplay.mountedSMBFolders) {
         isDemo = demo
+        isSetupPreview = demo && setupPreview
         self.folderMounts = folderMounts
         environment = demo ? nil : (suppliedEnvironment ?? AppEnvironment.live())
         preferencesURL = environment?.preferencesURL ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/SyncCopies/preferences.json")
+        if isSetupPreview {
+            page = .general
+            notificationStatus = L10n.text("Preview with sample data")
+            return
+        }
         if demo {
             let privateDB = Database(id: UUID(), filename: "Personal.kdbx", displayName: L10n.text("Personal"))
             let workDB = Database(id: UUID(), filename: "Work.kdbx", displayName: L10n.text("Work"))
@@ -188,6 +195,7 @@ final class AppModel: ObservableObject {
             persistenceFailed = true
             problem = L10n.format("Saved settings could not be read. %@", LocalizedMessage.from(error).rendered())
         }
+        if preferences.source == nil { page = .general }
         notifications?.discardStaleRequests()
         monitor = FileMonitor { [weak self] in
             self?.monitoredPaths = []
@@ -209,6 +217,9 @@ final class AppModel: ObservableObject {
         refresh()
     }
 
+    var needsSetup: Bool {
+        isSetupPreview || (!isDemo && !preferences.databases.values.contains { $0.enabled && $0.lastCopied != nil })
+    }
     var activeCount: Int { databases.filter { preference(for: $0).enabled }.count }
     // A saved bookmark enables retrying; sourceReadStatus describes actual read access.
     var sourceGranted: Bool { isDemo || preferences.source != nil }

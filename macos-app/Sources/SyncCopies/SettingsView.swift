@@ -54,6 +54,9 @@ struct SettingsView: View {
     private var general: some View {
         VStack(alignment: .leading, spacing: 22) {
             heading(L10n.text("General"), L10n.text("Startup, shared destination and Strongbox access."))
+            if model.needsSetup {
+                SetupChecklist(model: model)
+            }
             GroupBox(L10n.text("At login")) {
                 Toggle(L10n.format("Start %@ automatically", L10n.appName), isOn: Binding(get: { model.loginEnabled }, set: { model.setLogin($0) }))
                     .toggleStyle(.checkbox).frame(maxWidth: .infinity, alignment: .leading)

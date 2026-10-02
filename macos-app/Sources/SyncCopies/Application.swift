@@ -17,7 +17,7 @@ struct Application {
             let result = CopyIntegrationTest.run(fixturesOnly: CommandLine.arguments.contains("--copy-test-fixtures"), targetURL: targetURL)
             exit(result)
         }
-        let delegate = ApplicationDelegate(demo: CommandLine.arguments.contains("--demo"))
+        let delegate = ApplicationDelegate(demo: CommandLine.arguments.contains("--demo") || CommandLine.arguments.contains("--setup-demo"), setupPreview: CommandLine.arguments.contains("--setup-demo"))
         application.setActivationPolicy(.accessory)
         application.delegate = delegate
         application.run()
@@ -33,8 +33,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     private var observer: AnyCancellable?
     private var terminationPending = false
 
-    init(demo: Bool) {
-        model = AppModel(demo: demo)
+    init(demo: Bool, setupPreview: Bool = false) {
+        model = AppModel(demo: demo, setupPreview: setupPreview)
         super.init()
     }
 
@@ -106,7 +106,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
 
     private func updateIcon() {
         let warning = model.failureCount > 0 || model.problem != nil
-        statusItem?.button?.image = NSImage(systemSymbolName: warning ? "exclamationmark.triangle" : "doc.on.doc", accessibilityDescription: L10n.appName)
+        statusItem?.button?.image = (warning ? NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: L10n.appName) : AppIcon.image())
         statusItem?.button?.toolTip = L10n.format("%@: Active databases: %@, problems: %@", L10n.appName, L10n.count(model.activeCount), L10n.count(model.failureCount))
         statusItem?.button?.setAccessibilityLabel(statusItem?.button?.toolTip)
     }
