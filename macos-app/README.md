@@ -215,3 +215,18 @@ echte Strongbox-Backups wurden ausschließlich gelesen. NAS, Cloud-Prüfung,
 Mitteilungen, Dateiüberwachung, Anmeldung und Wake sind nicht Teil dieses Laufs.
 Die gezählten Berichte liegen im ignorierten Build-Verzeichnis, ohne echte
 Datenbanknamen, Kennungen, Quellpfade, Prüfsummen oder Inhalte.
+
+## Mitteilungen geprüft am 2. Oktober 2026
+
+Die Zustellung wurde mit einem eigenen signierten Sandbox-App-Bundle und
+künstlichen Dateien geprüft. Verweigerte und später geänderte Mitteilungsfreigaben,
+getrennte Kategorien, Fehlerwiederholungen über Neustarts, beide Erholungsarten
+und echte Mitteilungsklicks auf Datenbankdetails bestanden die Prüfung.
+Eine während der macOS-Abfrage ausgeschaltete Kategorie verhindert jetzt auch
+die bereits begonnene Zustellung. Noch ausstehende macOS-Anfragen dieser Kategorie
+werden entfernt; frühere Ereignisse werden nach einem Neustart nicht nachgeliefert.
+
+Die 8 neuen Mitteilungstests prüfen 16 Fälle ohne macOS-Freigabedialoge. Der
+vollständige native Testlauf besteht aus 69 Testfunktionen. Ergebnisse, Aufbau
+und Grenzen der nativen Prüfung stehen in
+[issue-6-notifications.md](../docs/testing/issue-6-notifications.md).

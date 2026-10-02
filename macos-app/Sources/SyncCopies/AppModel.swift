@@ -57,6 +57,13 @@ struct Preferences: Codable, Sendable {
     var globalFailure: String?
 }
 
+private struct PendingNotification {
+    let kind: WritableKeyPath<NotificationPreferences, Bool>
+    let title: String
+    let body: String
+    let databaseID: String?
+}
+
 struct DatabaseState: Sendable {
     var checked: Date?
     var backup: BackupInfo?
@@ -131,13 +138,14 @@ final class AppModel: ObservableObject {
     private let preferencesURL: URL
     private var persistenceFailed = false
     private var loadFailed = false
-    private var pendingNotifications: [(UUID, WritableKeyPath<NotificationPreferences, Bool>, String, String, String?)] = []
+    private var pendingNotifications: [PendingNotification] = []
     private var scanAgain = false
     private var generation = 0
     private var sourceScope: FolderAccess?
     private var monitoredPaths: Set<String> = []
     private var monitor: FileMonitor?
     private var notificationAttemptRunning = false
+    private var notificationRevisions: [WritableKeyPath<NotificationPreferences, Bool>: Int] = [:]
 
     init(demo: Bool = false, environment suppliedEnvironment: AppEnvironment? = nil, folderMounts: @escaping @Sendable () -> [FolderPathDisplay.Mount] = FolderPathDisplay.mountedSMBFolders) {
         isDemo = demo
@@ -177,6 +185,7 @@ final class AppModel: ObservableObject {
             persistenceFailed = true
             problem = "Die gespeicherten Einstellungen konnten nicht gelesen werden. \(error.localizedDescription)"
         }
+        notifications?.discardStaleRequests()
         monitor = FileMonitor { [weak self] in
             self?.monitoredPaths = []
             self?.refresh()
@@ -291,7 +300,7 @@ final class AppModel: ObservableObject {
         item.enabled = enabled
         if !enabled {
             item.lastFailure = nil
-            pendingNotifications.removeAll { $0.4 == database.id.uuidString }
+            pendingNotifications.removeAll { $0.databaseID == database.id.uuidString }
         }
         preferences.databases[database.id.uuidString] = item
         generation += 1
@@ -301,7 +310,11 @@ final class AppModel: ObservableObject {
     func setNotification(_ key: WritableKeyPath<NotificationPreferences, Bool>, to value: Bool) {
         guard !isStopping, !loadFailed else { return }
         preferences.notifications[keyPath: key] = value
-        pendingNotifications.removeAll { !preferences.notifications[keyPath: $0.1] }
+        if !value {
+            notificationRevisions[key, default: 0] += 1
+            notifications?.cancelPending(kind: key)
+        }
+        pendingNotifications.removeAll { !preferences.notifications[keyPath: $0.kind] }
         guard save() else { return }
         if value, !isDemo, let notifications {
             Task {
@@ -403,10 +416,10 @@ final class AppModel: ObservableObject {
                 let recoveredSource = preferences.globalFailure != nil
                 preferences.globalFailure = nil
                 let enabledIDs = Set(databases.filter { preference(for: $0).enabled }.map { $0.id.uuidString })
-                pendingNotifications.removeAll { $0.4.map { !enabledIDs.contains($0) } ?? ($0.1 == \.failures) }
+                pendingNotifications.removeAll { $0.databaseID.map { !enabledIDs.contains($0) } ?? ($0.kind == \.failures) }
                 if recoveredSource {
                     preferences.history.insert(HistoryEntry(date: Date(), databaseID: nil, name: "Strongbox", message: "Lesezugriff funktioniert wieder", isError: false), at: 0)
-                    if preferences.notifications.recoveries { pendingNotifications.append((UUID(), \.recoveries, "Strongbox: Fehler behoben", "Die lokalen Backups können wieder geprüft werden.", nil)) }
+                    if preferences.notifications.recoveries { pendingNotifications.append(PendingNotification(kind: \.recoveries, title: "Strongbox: Fehler behoben", body: "Die lokalen Backups können wieder geprüft werden.", databaseID: nil)) }
                 }
                 for database in databases where preference(for: database).enabled {
                     guard let state = states[database.id] else { continue }
@@ -417,7 +430,7 @@ final class AppModel: ObservableObject {
                         }
                         preferences.databases[database.id.uuidString, default: DatabasePreferences()].lastFailure = failure
                     } else {
-                        pendingNotifications.removeAll { $0.4 == database.id.uuidString && $0.1 == \.failures }
+                        pendingNotifications.removeAll { $0.databaseID == database.id.uuidString && $0.kind == \.failures }
                         if preference(for: database).lastFailure != nil {
                             preferences.databases[database.id.uuidString, default: DatabasePreferences()].lastFailure = nil
                             record(database, message: "Fehler behoben", isError: false)
@@ -448,7 +461,7 @@ final class AppModel: ObservableObject {
                 monitor?.stop()
                 if preferences.globalFailure != problem {
                     preferences.history.insert(HistoryEntry(date: Date(), databaseID: nil, name: "Strongbox", message: error.localizedDescription, isError: true), at: 0)
-                    if preferences.notifications.failures { pendingNotifications.append((UUID(), \.failures, "Strongbox konnte nicht gelesen werden", error.localizedDescription, nil)) }
+                    if preferences.notifications.failures { pendingNotifications.append(PendingNotification(kind: \.failures, title: "Strongbox konnte nicht gelesen werden", body: error.localizedDescription, databaseID: nil)) }
                     preferences.globalFailure = problem
                     _ = save()
                 }
@@ -572,7 +585,7 @@ final class AppModel: ObservableObject {
         preferences.history = Array(preferences.history.prefix(200))
     }
     private func queueNotification(_ database: Database, kind: WritableKeyPath<NotificationPreferences, Bool>, title: String, body: String) {
-        pendingNotifications.append((UUID(), kind, title, body, database.id.uuidString))
+        pendingNotifications.append(PendingNotification(kind: kind, title: title, body: body, databaseID: database.id.uuidString))
     }
     private func deliverNotifications() async {
         guard !notificationAttemptRunning, let notifications else {
@@ -583,9 +596,16 @@ final class AppModel: ObservableObject {
         defer { notificationAttemptRunning = false }
         while !pendingNotifications.isEmpty {
             let pending = pendingNotifications.removeFirst()
-            guard preferences.notifications[keyPath: pending.1] else { continue }
+            guard preferences.notifications[keyPath: pending.kind] else { continue }
             do {
-                try await notifications.send(title: pending.2, body: pending.3, databaseID: pending.4)
+                let revision = notificationRevisions[pending.kind, default: 0]
+                try await notifications.send(title: pending.title, body: pending.body, databaseID: pending.databaseID, kind: pending.kind) { [weak self] in
+                    guard let self, !self.isStopping,
+                          self.notificationRevisions[pending.kind, default: 0] == revision,
+                          self.preferences.notifications[keyPath: pending.kind] else { return false }
+                    return pending.databaseID.map { self.preferences.databases[$0]?.enabled == true } ?? true
+                }
+                notificationStatus = notifications.status
             } catch {
                 // Events without permission are kept in history, not delivered late.
                 pendingNotifications.removeAll()
@@ -594,9 +614,12 @@ final class AppModel: ObservableObject {
             }
         }
     }
-    private func updateNotificationStatus() async {
+    func updateNotificationStatus() async {
         guard let notifications, !isStopping else { return }
         await notifications.refreshAuthorization()
         notificationStatus = notifications.status
+        if notifications.isAuthorized, problem == FolderPermissionError.notificationsDenied.localizedDescription {
+            problem = nil
+        }
     }
 }

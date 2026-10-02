@@ -18,7 +18,7 @@ private final class AppMetadataFixture: NSObject, NSCoding {
     }
 }
 
-private final class ModelFixture: @unchecked Sendable {
+final class ModelFixture: @unchecked Sendable {
     let root: URL
     let source: URL
     let common: URL
@@ -63,7 +63,7 @@ private final class ModelFixture: @unchecked Sendable {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try Data(bytes.utf8).write(to: folder.appendingPathComponent(name))
     }
-    @MainActor func environment(interval: TimeInterval = 3600, wakeCenter: NotificationCenter = NotificationCenter(), loginStatus: @escaping () -> (enabled: Bool, needsApproval: Bool) = { (false, false) }, setLogin: @escaping (Bool) throws -> Void = { _ in }) -> AppEnvironment {
+    @MainActor func environment(interval: TimeInterval = 3600, wakeCenter: NotificationCenter = NotificationCenter(), loginStatus: @escaping () -> (enabled: Bool, needsApproval: Bool) = { (false, false) }, setLogin: @escaping (Bool) throws -> Void = { _ in }, notifications: NotificationService? = nil) -> AppEnvironment {
         AppEnvironment(preferencesURL: preferencesURL, resolveFolder: { [self] data in
             let url: URL
             switch String(decoding: data, as: UTF8.self) {
@@ -74,7 +74,7 @@ private final class ModelFixture: @unchecked Sendable {
             }
             guard FileManager.default.fileExists(atPath: url.path) else { throw CocoaError(.fileReadNoSuchFile) }
             return FolderAccess(url: url)
-        }, scheduler: AppScheduler(interval: interval, wakeCenter: wakeCenter), notifications: nil, loginStatus: loginStatus, setLogin: setLogin)
+        }, scheduler: AppScheduler(interval: interval, wakeCenter: wakeCenter), notifications: notifications, loginStatus: loginStatus, setLogin: setLogin)
     }
 }
 
