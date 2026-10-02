@@ -114,6 +114,210 @@ struct AppModelTests {
         return false
     }
 
+    @Test func savedSourceGrantDoesNotProveAccessWhileCheckIsPending() async throws {
+        let fixture = try ModelFixture()
+        let gate = ResolutionGate()
+        let base = fixture.environment()
+        let resolve = base.resolveFolder
+        let environment = AppEnvironment(preferencesURL: base.preferencesURL, resolveFolder: { data in
+            if data == Data("source".utf8), !gate.hasEntered { gate.wait() }
+            return try resolve(data)
+        }, scheduler: base.scheduler, notifications: nil, loginStatus: base.loginStatus, setLogin: base.setLogin)
+        let model = AppModel(environment: environment)
+        defer { gate.release.signal() }
+        try #require(try await eventually { gate.hasEntered })
+        #expect(model.sourceGranted)
+        #expect(model.sourceReadStatus == .checking)
+        #expect(!model.canChooseSource)
+        gate.release.signal()
+        try await settled(model)
+        #expect(model.sourceReadStatus == .available)
+        #expect(!model.canChooseSource)
+        #expect(model.sourceFolderPath == fixture.source.path)
+        await model.shutdown()
+    }
+
+    @Test func savedButDeniedSourceGrantCanBeRetriedAndRecovered() async throws {
+        let fixture = try ModelFixture()
+        let grant = SimulatedGrant()
+        grant.setRevoked(true)
+        let base = fixture.environment()
+        let resolve = base.resolveFolder
+        let environment = AppEnvironment(preferencesURL: base.preferencesURL, resolveFolder: { data in
+            if data == Data("source".utf8), grant.isRevoked { throw FolderPermissionError.accessDenied }
+            return try resolve(data)
+        }, scheduler: base.scheduler, notifications: nil, loginStatus: base.loginStatus, setLogin: base.setLogin)
+        let model = AppModel(environment: environment)
+        try await settled(model)
+        #expect(model.sourceGranted)
+        #expect(model.sourceReadStatus == .unavailable)
+        #expect(model.canChooseSource)
+        grant.setRevoked(false)
+        model.refresh()
+        try await settled(model)
+        #expect(model.sourceReadStatus == .available)
+        #expect(!model.canChooseSource)
+        #expect(model.sourceFolderPath == fixture.source.path)
+        grant.setRevoked(true)
+        model.refresh()
+        try await settled(model)
+        #expect(model.sourceReadStatus == .unavailable)
+        #expect(model.canChooseSource)
+        #expect(model.sourceFolderPath == fixture.source.path)
+        await model.shutdown()
+    }
+
+    @Test func staleSavedSourceGrantRequiresExplicitRenewal() async throws {
+        let fixture = try ModelFixture()
+        let base = fixture.environment()
+        let resolve = base.resolveFolder
+        let environment = AppEnvironment(preferencesURL: base.preferencesURL, resolveFolder: { data in
+            if data == Data("source".utf8) { throw FolderPermissionError.staleBookmark }
+            return try resolve(data)
+        }, scheduler: base.scheduler, notifications: nil, loginStatus: base.loginStatus, setLogin: base.setLogin)
+        let model = AppModel(environment: environment)
+        try await settled(model)
+        #expect(model.sourceGranted)
+        #expect(model.sourceReadStatus == .unavailable)
+        #expect(model.canChooseSource)
+        #expect(model.problem == FolderPermissionError.staleBookmark.localizedDescription)
+        await model.shutdown()
+    }
+
+    @Test func unreadableMetadataDirectoryDetectsLossDespiteResolvedGrant() async throws {
+        let fixture = try ModelFixture()
+        let directory = fixture.source.appendingPathComponent("Library/Preferences")
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: directory.path)
+        defer { _ = chmod(directory.path, 0o700) }
+        let model = AppModel(environment: fixture.environment())
+        try await settled(model)
+        #expect(model.sourceGranted)
+        #expect(model.sourceReadStatus == .unavailable)
+        #expect(model.canChooseSource)
+        #expect(model.problem != nil)
+        #expect(model.sourceFolderPath == fixture.source.path)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        model.refresh()
+        try await settled(model)
+        #expect(model.sourceReadStatus == .available)
+        #expect(!model.canChooseSource)
+        #expect(model.problem == nil)
+        await model.shutdown()
+    }
+
+    @Test func missingMetadataDoesNotRequestPermissionRenewal() async throws {
+        let fixture = try ModelFixture()
+        try FileManager.default.removeItem(at: fixture.source.appendingPathComponent("Library/Preferences/group.strongbox.mac.mcguill.plist"))
+        let model = AppModel(environment: fixture.environment())
+        try await settled(model)
+        #expect(model.problem != nil)
+        #expect(model.sourceReadStatus == .unconfirmed)
+        #expect(!model.canChooseSource)
+        await model.shutdown()
+    }
+
+    @Test func transientSourceFailureDoesNotRequestPermissionRenewal() async throws {
+        let fixture = try ModelFixture()
+        let base = fixture.environment()
+        let resolve = base.resolveFolder
+        let environment = AppEnvironment(preferencesURL: base.preferencesURL, resolveFolder: { data in
+            if data == Data("source".utf8) { throw MirrorError.changedFile }
+            return try resolve(data)
+        }, scheduler: base.scheduler, notifications: nil, loginStatus: base.loginStatus, setLogin: base.setLogin)
+        let model = AppModel(environment: environment)
+        try await settled(model)
+        #expect(model.problem == MirrorError.changedFile.localizedDescription)
+        #expect(model.sourceReadStatus == .unconfirmed)
+        #expect(!model.canChooseSource)
+        await model.shutdown()
+    }
+
+    @Test func unreadableBackupFolderOrFileRequiresSourceRenewal() async throws {
+        for denyFolder in [true, false] {
+            let fixture = try ModelFixture()
+            let folder = fixture.source.appendingPathComponent("backups/\(fixture.first.id.uuidString)")
+            let denied = denyFolder ? folder : folder.appendingPathComponent("backup.bak")
+            try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: denied.path)
+            defer { _ = chmod(denied.path, denyFolder ? 0o700 : 0o600) }
+            let model = AppModel(environment: fixture.environment())
+            try await settled(model)
+            #expect(model.states[fixture.first.id]?.error != nil)
+            #expect(model.states[fixture.second.id]?.error == nil)
+            #expect(model.sourceReadStatus == .unavailable)
+            #expect(model.canChooseSource)
+            try FileManager.default.setAttributes([.posixPermissions: denyFolder ? 0o700 : 0o600], ofItemAtPath: denied.path)
+            model.refresh()
+            try await settled(model)
+            #expect(model.sourceReadStatus == .available)
+            #expect(!model.canChooseSource)
+            await model.shutdown()
+        }
+    }
+
+    @Test func deniedTargetDoesNotRequestSourceRenewal() async throws {
+        let fixture = try ModelFixture()
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: fixture.common.path)
+        defer { _ = chmod(fixture.common.path, 0o700) }
+        let model = AppModel(environment: fixture.environment())
+        try await settled(model)
+        #expect(model.states[fixture.first.id]?.error != nil)
+        #expect(model.states[fixture.second.id]?.error == nil)
+        #expect(model.sourceReadStatus == .available)
+        #expect(!model.canChooseSource)
+        await model.shutdown()
+    }
+
+    @Test func copyPermissionFailuresRetainSourceOrTargetProvenance() throws {
+        for denySource in [true, false] {
+            let fixture = try ModelFixture()
+            let backup = try StrongboxBackups.newest(for: fixture.first, groupContainer: fixture.source)
+            let target = fixture.common.appendingPathComponent(fixture.first.filename)
+            try Data("existing fixture copy".utf8).write(to: target)
+            let denied = denySource ? backup.url : fixture.common
+            try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: denied.path)
+            defer { _ = chmod(denied.path, denySource ? 0o600 : 0o700) }
+            #expect(throws: denySource ? MirrorError.sourcePermissionDenied : MirrorError.permissionDenied) {
+                try MirrorEngine.copy(backup: backup, to: fixture.common, filename: fixture.first.filename)
+            }
+            try FileManager.default.setAttributes([.posixPermissions: denySource ? 0o600 : 0o700], ofItemAtPath: denied.path)
+            #expect(try Data(contentsOf: target) == Data("existing fixture copy".utf8))
+        }
+    }
+
+    @Test func malformedMetadataKeepsWorkingAccessSeparateFromCatalogFailure() async throws {
+        let fixture = try ModelFixture()
+        try Data("invalid fixture metadata".utf8).write(to: fixture.source.appendingPathComponent("Library/Preferences/group.strongbox.mac.mcguill.plist"))
+        let model = AppModel(environment: fixture.environment())
+        try await settled(model)
+        #expect(model.problem == MirrorError.invalidMetadata.localizedDescription)
+        #expect(model.sourceReadStatus == .available)
+        #expect(!model.canChooseSource)
+        #expect(model.sourceFolderPath == fixture.source.path)
+        await model.shutdown()
+    }
+
+    @Test func targetFailurePreservesSourceAccessAndCompleteFolderPaths() async throws {
+        let fixture = try ModelFixture()
+        let model = AppModel(environment: fixture.environment())
+        try await settled(model)
+        #expect(model.sourceReadStatus == .available)
+        #expect(model.commonTargetName == fixture.common.path)
+        #expect(model.targetFolderPath(for: fixture.first) == fixture.common.path)
+        #expect(model.targetFolderPath(for: fixture.second) == fixture.override.path)
+        #expect(model.states[fixture.first.id]?.targetName == fixture.common.path)
+        let offline = fixture.root.appendingPathComponent("offline-target")
+        try FileManager.default.moveItem(at: fixture.common, to: offline)
+        model.refresh()
+        try await settled(model)
+        #expect(model.states[fixture.first.id]?.error != nil)
+        #expect(model.sourceReadStatus == .available)
+        #expect(!model.canChooseSource)
+        #expect(model.commonTargetName == fixture.common.path)
+        #expect(model.states[fixture.first.id]?.targetName == fixture.common.path)
+        #expect(model.targetFolderPath(for: fixture.first) == fixture.common.path)
+        await model.shutdown()
+    }
+
     @Test func persistedSelectionAndTargetsSurviveRestart() async throws {
         let fixture = try ModelFixture()
         let model = AppModel(environment: fixture.environment())

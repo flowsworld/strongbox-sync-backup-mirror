@@ -25,7 +25,7 @@ public enum DestinationPlanner {
     /// Validate every selected destination before copying any database. Directory
     /// identity catches different path spellings that refer to the same folder.
     public static func conflictingDatabaseIDs(_ destinations: [CopyDestination], sourceRoot: URL) throws -> Set<UUID> {
-        let source = try openDirectory(sourceRoot)
+        let source = try openDirectory(sourceRoot, accessRole: .source)
         let sourceStamp = try source.stamp()
         let sourcePath = normalizedDestinationName(sourceRoot.resolvingSymlinksInPath().standardizedFileURL.path)
         var groups: [DestinationIdentity: [UUID]] = [:]

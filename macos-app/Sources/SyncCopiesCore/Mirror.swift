@@ -17,10 +17,11 @@ public enum StrongboxBackups {
         let directory = try openDirectory(folder)
         // Listing via the descriptor keeps discovery anchored even if the path is replaced.
         let listingDescriptor = dup(directory.value)
-        guard listingDescriptor >= 0 else { throw MirrorError.unsafeFile }
+        guard listingDescriptor >= 0 else { throw fileOperationError() }
         guard let stream = fdopendir(listingDescriptor) else {
+            let error = fileOperationError()
             Darwin.close(listingDescriptor)
-            throw MirrorError.unsafeFile
+            throw error
         }
         defer { closedir(stream) }
         var newest: (String, FileStamp)?
@@ -37,7 +38,7 @@ public enum StrongboxBackups {
             }
             errno = 0
         }
-        guard errno == 0 else { throw MirrorError.fileOperation(String(cString: strerror(errno))) }
+        guard errno == 0 else { throw fileOperationError() }
         guard let (name, stamp) = newest else { throw MirrorError.missingBackup }
         guard stamp.size > 0 else { throw MirrorError.emptyBackup }
         let file = try openFile(name, in: directory)
@@ -51,11 +52,11 @@ public enum CopyResult: Sendable, Equatable { case copied, unchanged }
 public enum MirrorEngine {
     public static func copy(backup: BackupInfo, to targetDirectory: URL, filename: String) throws -> CopyResult {
         guard validFilename(filename) else { throw MirrorError.unsafeFilename }
-        let sourceDirectory = try openDirectory(backup.url.deletingLastPathComponent())
+        let sourceDirectory = try openDirectory(backup.url.deletingLastPathComponent(), accessRole: .source)
         let sourceName = backup.url.lastPathComponent
         let source = try openFile(sourceName, in: sourceDirectory)
-        let (contents, sourceStamp) = try readStable(source)
-        guard !contents.isEmpty else { throw MirrorError.emptyBackup }
+        let sourceStamp = try source.stamp()
+        guard sourceStamp.size > 0 else { throw MirrorError.emptyBackup }
         guard sourceStamp.size == backup.size, sourceStamp.creationDate == backup.creationDate else { throw MirrorError.changedFile }
         let destination = try openDirectory(targetDirectory)
         // Independent directory descriptors coordinate copies across processes
@@ -67,35 +68,27 @@ public enum MirrorEngine {
             guard original.regular else { throw MirrorError.unsafeFile }
             guard !original.sameIdentity(as: sourceStamp) else { throw MirrorError.sameFile }
             let target = try openFile(filename, in: destination)
-            let (existing, targetStamp) = try readStable(target)
-            guard targetStamp == original else { throw MirrorError.changedFile }
-            if existing == contents {
-                try verifySource(source, stamp: sourceStamp, contents: contents, name: sourceName, directory: sourceDirectory)
+            if try sameContents(source, stamp: sourceStamp, target, stamp: original) {
+                try verifySource(source, stamp: sourceStamp, snapshot: target, snapshotStamp: original, name: sourceName, directory: sourceDirectory)
                 guard try entryStamp(filename, in: destination) == original else { throw MirrorError.changedFile }
                 try verifyDirectories(sourceDirectory, sourceURL: backup.url.deletingLastPathComponent(), destination: destination, destinationURL: targetDirectory)
                 return .unchanged
             }
         }
         let temporaryName = ".synccopies-\(UUID().uuidString).tmp"
-        let temporary = try Descriptor(openat(destination.value, temporaryName, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600))
+        let temporary = try Descriptor(openat(destination.value, temporaryName, O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600))
         // Retain temporary files after any failure. A sync client can replace
         // their paths independently of our advisory lock, so deleting by name
         // could remove someone else's file. Successful rename consumes ours.
-        try contents.withUnsafeBytes { bytes in
-            var written = 0
-            while written < bytes.count {
-                let count = Darwin.write(temporary.value, bytes.baseAddress!.advanced(by: written), bytes.count - written)
-                if count < 0 && errno == EINTR { continue }
-                guard count > 0 else { throw MirrorError.fileOperation(String(cString: strerror(errno))) }
-                written += count
-            }
-        }
-        guard fsync(temporary.value) == 0 else { throw MirrorError.fileOperation(String(cString: strerror(errno))) }
-        try verifySource(source, stamp: sourceStamp, contents: contents, name: sourceName, directory: sourceDirectory)
-        guard try entryStamp(filename, in: destination) == original else { throw MirrorError.changedFile }
+        try copyStable(source, stamp: sourceStamp, to: temporary)
+        guard fsync(temporary.value) == 0 else { throw fileOperationError() }
+        let temporaryStamp = try temporary.stamp()
+        try verifySource(source, stamp: sourceStamp, snapshot: temporary, snapshotStamp: temporaryStamp, name: sourceName, directory: sourceDirectory)
+        guard try entryStamp(temporaryName, in: destination) == temporaryStamp,
+              try entryStamp(filename, in: destination) == original else { throw MirrorError.changedFile }
         try verifyDirectories(sourceDirectory, sourceURL: backup.url.deletingLastPathComponent(), destination: destination, destinationURL: targetDirectory)
         guard renameat(destination.value, temporaryName, destination.value, filename) == 0 else {
-            throw MirrorError.fileOperation(String(cString: strerror(errno)))
+            throw fileOperationError()
         }
         return .copied
     }
@@ -104,20 +97,20 @@ public enum MirrorEngine {
         while flock(directory.value, LOCK_EX | LOCK_NB) != 0 {
             if errno == EINTR { continue }
             if errno == EWOULDBLOCK { throw MirrorError.targetBusy }
-            throw MirrorError.fileOperation(String(cString: strerror(errno)))
+            throw fileOperationError()
         }
     }
 
     private static func verifyDirectories(_ source: Descriptor, sourceURL: URL, destination: Descriptor, destinationURL: URL) throws {
-        let currentSource = try openDirectory(sourceURL)
+        let currentSource = try openDirectory(sourceURL, accessRole: .source)
         let currentDestination = try openDirectory(destinationURL)
         guard try currentSource.stamp().sameIdentity(as: source.stamp()),
               try currentDestination.stamp().sameIdentity(as: destination.stamp()) else { throw MirrorError.changedFile }
     }
 
-    private static func verifySource(_ source: Descriptor, stamp: FileStamp, contents: Data, name: String, directory: Descriptor) throws {
-        let (after, afterStamp) = try readStable(source)
-        guard afterStamp == stamp, after == contents, try entryStamp(name, in: directory) == stamp else {
+    private static func verifySource(_ source: Descriptor, stamp: FileStamp, snapshot: Descriptor, snapshotStamp: FileStamp, name: String, directory: Descriptor) throws {
+        guard try sameContents(source, stamp: stamp, snapshot, stamp: snapshotStamp),
+              try entryStamp(name, in: directory) == stamp else {
             throw MirrorError.changedFile
         }
     }

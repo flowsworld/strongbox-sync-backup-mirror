@@ -159,3 +159,64 @@ prüfen:
 Für jede manuelle Prüfung Datum, macOS-Version, Signierungsart und Ergebnis
 ergänzen. Bis diese Nachweise vorliegen, bleibt Issue #5 für die manuellen
 Abnahmeschritte offen. Der automatisierte Lauf ersetzt keine OS-Freigabeprüfung.
+
+### Rückmeldung aus der manuellen QA am 2. Oktober 2026
+
+Flo prüfte die separat signierte QA-Installation mit Bundle-ID
+`cloud.diesis.sync-copies.qa-manual20261001` auf demselben Mac. Der Assistent
+verwendete ausschließlich künstliche Quellen und eigene lokale Zielordner.
+Laut gespeichertem Ergebnis bestand die Auswahl eines eigenen Ziels mit
+bytegleicher Kopie. Tatsächliches Ab- und Anmelden mit eingeschaltetem und
+ausgeschaltetem Autostart sowie physisches Schlafen und Aufwachen bestanden
+ebenfalls. Der Zugriffs-Test bestand nach Dateisystem-Sperre und erneuter
+Ordnerwahl. Er belegt weiterhin keinen Entzug eines Security-Scoped Bookmarks
+durch macOS.
+
+Die 8-GiB-Quelle scheiterte mit `Invalid argument`; geordnetes Beenden während
+der Kopie bestand damit nicht. Ein minimierter Darwin-Aufruf reproduzierte
+`errno 22` bereits bei einem einzelnen Schreibauftrag von 2.147.483.648 Bytes
+an `/dev/null`. Die bisherige Implementierung übergab sämtliche verbleibenden
+Backup-Bytes in einem Auftrag und hielt ganze Backups im Arbeitsspeicher.
+Die Korrektur kopiert und vergleicht in Blöcken von höchstens 1 MiB je Puffer.
+Der Regressionstest benutzt den tatsächlichen Writer mit einer virtuellen
+2-GiB-Zuordnung und `/dev/null`, ohne große Testdatei oder RAM-Allokation.
+
+Ein beim ersten Login beobachteter Dialog für lokalen Netzwerkzugriff ließ sich
+der QA-App in den erhaltenen Logs nicht zuordnen. Das signierte Bundle enthält
+keine Netzwerk-Entitlements, Bonjour-Dienste oder Beschreibung für lokalen
+Netzwerkzugriff. Der Quelltext enthält keine ausdrückliche Netzwerk-Erkennung.
+Diese Prüfung identifiziert den Verursacher des Dialogs nicht.
+
+Die QA-Installation bleibt für den noch offenen Netzwerkziel-Test bestehen.
+Flo verwendet dafür eine SMB-Freigabe auf einem Windows-PC. Das prüft die
+Sperr- und Austauschsemantik dieses konkreten SMB-Ziels; ein NAS ist dafür
+nicht erforderlich. Ergebnisse werden erst nach dem tatsächlichen Test ergänzt.
+
+Der korrigierte Release-Code bestand am selben Tag alle 44 nativen Tests,
+Release-Build und Ad-hoc-Signaturprüfung. Zwei unabhängige Reviews fanden
+zunächst eine falsche Einordnung vorübergehender Metadatenänderungen und nicht
+erkannte Lesesperren einzelner Backups. Beide Befunde wurden korrigiert und
+gezielt erneut geprüft. Die App unterscheidet nun gespeicherte Freigaben,
+geprüften Lesezugriff, tatsächliche Zugriffsverweigerung und noch ungeklärte
+Lesefehler. Nur bestätigte Zugriffsverweigerung oder veraltete Freigaben erlauben
+eine Erneuerung. Zielfehler verändern den Quellenstatus nicht.
+
+Die aktualisierte signierte QA-App kopierte anschließend die vorhandene
+8-GiB-Quelle. Bei 173.015.040 geschriebenen Bytes der temporären Datei forderte
+`QAControl` über `NSRunningApplication.terminate()` das geordnete Beenden an.
+Die alte 74-Byte-Zieldatei war zu diesem Zeitpunkt unverändert. Nach insgesamt
+5,468 Sekunden war die App beendet und die vollständige 8-GiB-Zieldatei vorhanden.
+Ein unabhängiger blockweiser Vergleich bestätigte identische Bytes. Der höchste
+abgetastete RSS-Wert betrug 58.464 KiB. Große Quelle und Zielkopie wurden danach
+entfernt und kleine künstliche Backups für die nächsten Prüfungen angelegt.
+Das lokale Ergebnisprotokoll ist
+`macos-app/build/qa-evidence/issue-5-large-retest.json`.
+
+Dieser Nachweis verwendet den normalen AppDelegate-Beendenpfad, jedoch keinen
+GUI-Menüklick. Der native Computer-Use-Dienst scheiterte erneut beim Zugriff auf
+die QA-App, zunächst mit geschlossenem Kommunikationskanal, später mit Timeout.
+Damit fehlen eine neue GUI-Aufnahme und die visuelle Abnahme der geänderten
+Klickfläche, vollständigen Pfade und Zugriffsanzeige. Diese Änderungen sind durch
+Modelltests und den Release-Build geprüft. Der Menütest und der Windows-SMB-Test
+bleiben für die manuelle Abnahme offen; frühere Fehlversuche bleiben im
+Assistentenprotokoll erhalten.
