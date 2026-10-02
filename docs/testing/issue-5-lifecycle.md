@@ -220,3 +220,69 @@ Klickfläche, vollständigen Pfade und Zugriffsanzeige. Diese Änderungen sind d
 Modelltests und den Release-Build geprüft. Der Menütest und der Windows-SMB-Test
 bleiben für die manuelle Abnahme offen; frühere Fehlversuche bleiben im
 Assistentenprotokoll erhalten.
+
+
+### Windows-SMB und Netzwerkpfade am 2. Oktober 2026
+
+Die Ordnerauswahl auf Flos Windows-SMB-Freigabe gelang; die erste Kopie scheiterte
+sofort mit `Is a directory`. Ein minimierter Aufruf reproduzierte `EISDIR` beim
+Sperren des geöffneten Zielordners. Das Dateisystem erlaubt diese Verzeichnissperre
+nicht. Die App verwendet bei `EISDIR` oder `ENOTSUP` deshalb eine reguläre,
+persistente `.synccopies.lock` im Ziel. Diese wird weder geleert noch gelöscht.
+Eine zusätzliche Reservierung verhindert parallele Kopien im selben Prozess,
+da SMB zwei unabhängige Deskriptoren desselben Prozesses die Sperre gewähren kann.
+Die Sperrdatei muss regulär, einfach verlinkt und weiterhin derselbe Dateieintrag
+sein. Ihr Name ist für Datenbankkopien reserviert. Lokale Ziele verwenden weiterhin
+die Verzeichnissperre, sofern das Dateisystem diese unterstützt.
+
+Die Prüfung auf der tatsächlichen Freigabe zeigte außerdem verzögert veröffentlichte
+Metadaten einer gerade geschriebenen Datei. Nach `fsync` wird der alleinige
+Schreibdeskriptor geschlossen. Ein erneut geprüftes, relativ zum Zielordner
+geöffnetes Lesehandle dient zum Bytevergleich. Identität, Größe, Dateityp und
+Linkanzahl müssen unverändert sein; vor dem Austausch werden die vollständigen
+Dateistempel und die ursprüngliche Zieldatei erneut geprüft. Fehlgeschlagene
+Kopien behalten ihre temporäre Datei und ersetzen keine bestehende Kopie.
+
+Der finale Kopierkern bestand fünf aufeinanderfolgende vollständige Läufe auf
+der Windows-Freigabe. Jeder Lauf bestätigte eine bytegleiche 3.145.865-Byte-Kopie,
+den unveränderten Dateieintrag bei identischen Bytes, erneutes Kopieren nach
+einer künstlichen Zieländerung, den erhaltenen Sperrdateieintrag, zwei separat
+gestartete blockierte Prozesse und die Freigabe nach Beenden der Sperre trotz
+eines weiteren offenen Lesehandles. Die ausschließlich für diese Diagnose
+angelegten SMB-Ordner, künstlichen Quellen und Probeprogramme wurden entfernt.
+Das Ergebnis liegt lokal in
+`macos-app/build/qa-evidence/issue-5-smb-core-retest.json`.
+
+Die aktualisierte, ad-hoc-signierte QA-App verwendete anschließend Flos bereits
+gespeicherte SMB-Ordnerfreigabe. Sie behob den bisherigen Fehler und kopierte nach
+einem echten Dateiereignis ein neues künstliches Backup bytegleich. Das eigene
+lokale Ziel der zweiten Datenbank bestand denselben Vergleich. Beide gespeicherten
+Fehlerzustände waren leer, und genau eine QA-Instanz lief. Das lokale Protokoll ist
+`macos-app/build/qa-evidence/issue-5-smb-app-retest.json`. Die kleine QA-Installation
+und ihre SMB-Testkopie bleiben für das noch ausstehende Trennen und erneute
+Verbinden der Freigabe bestehen. Vorhandene persönliche Dateien wurden nicht
+verwendet; die Freigabe wurde nicht ausgehängt.
+
+SMB-Ziele zeigen jetzt `smb://Server/Freigabe/Unterordner` und darunter den
+vollständigen lokalen Mountpfad. Benutzername und Kennwort werden aus der
+Mountquelle entfernt. Die Anzeige liest die lokale Mounttabelle ohne Netzwerkabfrage
+und behält während eines Verbindungsfehlers die zuletzt bekannte Serverangabe.
+Lokale Ordner behalten ihren vollständigen lokalen Pfad. Die Erweiterung betrifft
+SMB; andere Netzwerkprotokolle wurden nicht geprüft.
+
+Alle 61 nativen Tests, Release-Build und Signaturprüfung bestanden. Zwei unabhängige
+Reviews prüften den SMB-Fix und die Netzwerkpfade einschließlich des letzten
+Schließen-und-Wiederöffnen-Schritts und fanden keine verbleibenden Befunde.
+Computer Use scheiterte auch nach dem Update mit `timeoutReached` beim Zugriff auf
+die QA-App. Eine visuelle Abnahme und eine neue GUI-Aufnahme sind damit weiterhin
+nicht belegt. Trennen und Wiederverbinden des SMB-Ziels, tatsächlicher Entzug einer
+macOS-Ordnerfreigabe und ältere unterstützte macOS-Versionen bleiben offen.
+
+Der finale signierte Build bestand zusätzlich erneut den automatisierten
+8-GiB-Beendentest. Bei 377.487.360 Bytes der temporären Datei wurde über
+`NSRunningApplication.terminate()` das Beenden angefordert; das bestehende
+74-Byte-Ziel war noch unverändert. Die App beendete sich nach 5,450 Sekunden mit
+einer vollständigen, unabhängig byteverglichenen 8-GiB-Kopie. Der höchste
+abgetastete RSS-Wert betrug 57.984 KiB. Große Quelle und Ziel wurden entfernt,
+die gespeicherte SMB-Auswahl wiederhergestellt und genau eine QA-Instanz gestartet.
+Dies belegt weiterhin den nativen Beendenpfad, keinen GUI-Menüklick.

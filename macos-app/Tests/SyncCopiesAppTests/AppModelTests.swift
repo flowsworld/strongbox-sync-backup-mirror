@@ -85,6 +85,14 @@ private final class SimulatedGrant: @unchecked Sendable {
     func setRevoked(_ value: Bool) { lock.withLock { revoked = value } }
 }
 
+private final class SimulatedMounts: @unchecked Sendable {
+    private let lock = NSLock()
+    private var mounts: [FolderPathDisplay.Mount]
+    init(_ mounts: [FolderPathDisplay.Mount]) { self.mounts = mounts }
+    func snapshot() -> [FolderPathDisplay.Mount] { lock.withLock { mounts } }
+    func unmount() { lock.withLock { mounts = [] } }
+}
+
 private final class ResolutionGate: @unchecked Sendable {
     private let lock = NSLock()
     private var entered = false
@@ -315,6 +323,37 @@ struct AppModelTests {
         #expect(model.commonTargetName == fixture.common.path)
         #expect(model.states[fixture.first.id]?.targetName == fixture.common.path)
         #expect(model.targetFolderPath(for: fixture.first) == fixture.common.path)
+        await model.shutdown()
+    }
+
+    @Test func networkFolderLabelsRetainServerShareAndLocalPathsAfterUnmount() async throws {
+        let fixture = try ModelFixture()
+        let mounts = SimulatedMounts([
+            FolderPathDisplay.Mount(path: fixture.common.path, source: "//alice:secret@nas.example/Downloads"),
+            FolderPathDisplay.Mount(path: fixture.override.path, source: "//work.example/Backups"),
+        ])
+        let model = AppModel(environment: fixture.environment(), folderMounts: { mounts.snapshot() })
+        try await settled(model)
+        let commonLabel = "smb://nas.example/Downloads\n\(fixture.common.path)"
+        let overrideLabel = "smb://work.example/Backups\n\(fixture.override.path)"
+        #expect(model.commonTargetName == commonLabel)
+        #expect(model.targetFolderPath(for: fixture.first) == commonLabel)
+        #expect(model.targetFolderPath(for: fixture.second) == overrideLabel)
+        #expect(model.states[fixture.first.id]?.targetName == commonLabel)
+        #expect(model.sourceFolderPath == fixture.source.path)
+        mounts.unmount()
+        // Even a still-resolvable bookmark must not erase the cached remote path.
+        model.refresh()
+        try await settled(model)
+        #expect(model.commonTargetName == commonLabel)
+        #expect(model.states[fixture.first.id]?.targetName == commonLabel)
+        try FileManager.default.moveItem(at: fixture.common, to: fixture.root.appendingPathComponent("offline-target"))
+        model.refresh()
+        try await settled(model)
+        #expect(model.states[fixture.first.id]?.error != nil)
+        #expect(model.states[fixture.first.id]?.targetName == commonLabel)
+        #expect(model.commonTargetName == commonLabel)
+        #expect(model.targetFolderPath(for: fixture.second) == overrideLabel)
         await model.shutdown()
     }
 

@@ -40,6 +40,52 @@ struct CopyConcurrencyTests {
         }
     }
 
+    @Test func temporaryFinalizationClosesWriterAndReopensTheSameFileReadOnly() throws {
+        try fixture { _, target, backup in
+            let directory = try openDirectory(target)
+            let source = try openFile(backup.url.lastPathComponent, in: openDirectory(backup.url.deletingLastPathComponent()))
+            let sourceStamp = try source.stamp()
+            let name = ".synccopies-finalization.tmp"
+            var writer: Descriptor? = try Descriptor(openat(directory.value, name, O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600))
+            try copyStable(source, stamp: sourceStamp, to: writer!)
+            #expect(fsync(writer!.value) == 0)
+            let written = try writer!.stamp()
+            let reader = try finishCopiedFile(&writer, name: name, in: directory)
+            #expect(writer == nil)
+            #expect(fcntl(reader.value, F_GETFL) & O_ACCMODE == O_RDONLY)
+            let readStamp = try reader.stamp()
+            #expect(readStamp.sameIdentity(as: written))
+            #expect(try sameContents(source, stamp: sourceStamp, reader, stamp: readStamp))
+            #expect(try entryStamp(name, in: directory) == readStamp)
+        }
+    }
+
+    @Test func temporaryFinalizationRejectsMissingAndReplacedPaths() throws {
+        try fixture { _, target, _ in
+            let directory = try openDirectory(target)
+            let name = ".synccopies-finalization.tmp"
+            let file = target.appendingPathComponent(name)
+            var writer: Descriptor? = try Descriptor(openat(directory.value, name, O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600))
+            let bytes = Data("copied bytes".utf8)
+            try bytes.withUnsafeBytes { try writeAll($0, to: writer!) }
+            #expect(fsync(writer!.value) == 0)
+            // Retain the original inode under another name, then replace its path
+            // with identical bytes. Byte equality must not bypass identity checks.
+            try FileManager.default.moveItem(at: file, to: target.appendingPathComponent("held-temporary"))
+            #expect(throws: MirrorError.changedFile) {
+                try finishCopiedFile(&writer, name: name, in: directory)
+            }
+            #expect(writer == nil)
+            writer = try Descriptor(openat(directory.value, "held-temporary", O_RDWR | O_NOFOLLOW | O_CLOEXEC))
+            try bytes.write(to: file)
+            #expect(throws: MirrorError.changedFile) {
+                try finishCopiedFile(&writer, name: name, in: directory)
+            }
+            #expect(writer == nil)
+            #expect(try Data(contentsOf: file) == bytes)
+        }
+    }
+
     @Test func interruptedCopiesAndUnrelatedFilesSurviveFailedAndSuccessfulCopies() throws {
         try fixture { root, target, backup in
             let stale = ".synccopies-\(UUID().uuidString).tmp"

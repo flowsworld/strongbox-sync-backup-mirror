@@ -37,6 +37,10 @@ func validFilename(_ name: String) -> Bool {
     !name.isEmpty && name != "." && name != ".." && !name.contains("/") && !name.contains("\0")
 }
 
+func validDestinationFilename(_ name: String) -> Bool {
+    validFilename(name) && normalizedDestinationName(name) != DestinationLock.filename
+}
+
 enum FileAccessRole {
     case unspecified, source
 }
@@ -69,6 +73,7 @@ struct FileStamp: Equatable {
     let inode: ino_t
     let size: off_t
     let mode: mode_t
+    let linkCount: nlink_t
     let birthSeconds: Int
     let birthNanos: Int
     let modifiedSeconds: Int
@@ -77,6 +82,7 @@ struct FileStamp: Equatable {
     let changedNanos: Int
     init(_ s: stat) {
         device = s.st_dev; inode = s.st_ino; size = s.st_size; mode = s.st_mode
+        linkCount = s.st_nlink
         birthSeconds = s.st_birthtimespec.tv_sec; birthNanos = s.st_birthtimespec.tv_nsec
         modifiedSeconds = s.st_mtimespec.tv_sec; modifiedNanos = s.st_mtimespec.tv_nsec
         changedSeconds = s.st_ctimespec.tv_sec; changedNanos = s.st_ctimespec.tv_nsec
@@ -131,6 +137,25 @@ func entryStamp(_ name: String, in directory: Descriptor) throws -> FileStamp? {
     if fstatat(directory.value, name, &info, AT_SYMLINK_NOFOLLOW) == 0 { return FileStamp(info) }
     if errno == ENOENT { return nil }
     throw fileOperationError(role: directory.accessRole)
+}
+
+/// Consume the sole writable descriptor after fsync. SMB may publish final
+/// timestamps only when its writer closes, so validate through a fresh reader.
+func finishCopiedFile(_ writer: inout Descriptor?, name: String, in directory: Descriptor) throws -> Descriptor {
+    guard writer != nil else { throw MirrorError.unsafeFile }
+    let written = try writer!.stamp()
+    guard written.regular, written.linkCount == 1 else { throw MirrorError.unsafeFile }
+    writer = nil
+    // Refresh the anchored entry after SMB publishes the writer's close, and
+    // reject a removed or replaced path before opening the read-only snapshot.
+    guard let published = try entryStamp(name, in: directory) else { throw MirrorError.changedFile }
+    guard published.regular, published.linkCount == 1 else { throw MirrorError.unsafeFile }
+    guard published.sameIdentity(as: written), published.size == written.size else { throw MirrorError.changedFile }
+    let reader = try openFile(name, in: directory)
+    let reopened = try reader.stamp()
+    guard reopened.regular, reopened.linkCount == 1 else { throw MirrorError.unsafeFile }
+    guard reopened.sameIdentity(as: written), reopened.size == written.size else { throw MirrorError.changedFile }
+    return reader
 }
 
 // Both backup copying and byte validation use fixed-size buffers. Backup size

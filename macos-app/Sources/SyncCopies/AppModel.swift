@@ -121,6 +121,7 @@ final class AppModel: ObservableObject {
     @Published var expandedDatabases: Set<UUID> = []
 
     private let environment: AppEnvironment?
+    private let folderMounts: @Sendable () -> [FolderPathDisplay.Mount]
     private var notifications: NotificationService? { environment?.notifications }
     private(set) var startupConflict = false
     private(set) var isStopping = false
@@ -138,8 +139,9 @@ final class AppModel: ObservableObject {
     private var monitor: FileMonitor?
     private var notificationAttemptRunning = false
 
-    init(demo: Bool = false, environment suppliedEnvironment: AppEnvironment? = nil) {
+    init(demo: Bool = false, environment suppliedEnvironment: AppEnvironment? = nil, folderMounts: @escaping @Sendable () -> [FolderPathDisplay.Mount] = FolderPathDisplay.mountedSMBFolders) {
         isDemo = demo
+        self.folderMounts = folderMounts
         environment = demo ? nil : (suppliedEnvironment ?? AppEnvironment.live())
         preferencesURL = environment?.preferencesURL ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/SyncCopies/preferences.json")
@@ -191,6 +193,7 @@ final class AppModel: ObservableObject {
         environment.scheduler.start { [weak self] in self?.refresh() }
         Task { await updateNotificationStatus() }
         rememberTargetPaths()
+        if let source = preferences.source { rememberBookmarkPath(source, mounts: folderMounts()) }
         refresh()
     }
 
@@ -210,21 +213,26 @@ final class AppModel: ObservableObject {
     }
     func label(for bookmark: Data?) -> String {
         guard let bookmark else { return "Kein Ordner ausgewählt" }
-        if let path = folderPaths[bookmark] { return path }
+        return folderPaths[bookmark] ?? "Ordnerpfad nicht verfügbar"
+    }
+
+    private func rememberBookmarkPath(_ bookmark: Data, mounts: [FolderPathDisplay.Mount]) {
         // Resolving a path for display neither starts a security scope nor proves read access.
         var stale = false
         if let url = try? URL(resolvingBookmarkData: bookmark, options: [.withoutUI, .withoutMounting], relativeTo: nil, bookmarkDataIsStale: &stale) {
-            return url.path
+            folderPaths[bookmark] = FolderPathDisplay.label(for: url.path, mounts: mounts, previous: folderPaths[bookmark])
         }
-        return "Ordnerpfad nicht verfügbar"
     }
 
     private func rememberTargetPaths() {
         guard let environment else { return }
+        let mounts = folderMounts()
         let targets = [preferences.defaultTarget] + preferences.databases.values.map(\.target)
         for bookmark in targets.compactMap({ $0 }) {
             // This cache is best effort. The scan reports access failures for enabled targets.
-            if let folder = try? environment.resolveFolder(bookmark) { folderPaths[bookmark] = folder.url.path }
+            if let folder = try? environment.resolveFolder(bookmark) {
+                folderPaths[bookmark] = FolderPathDisplay.label(for: folder.url.path, mounts: mounts, previous: folderPaths[bookmark])
+            } else { rememberBookmarkPath(bookmark, mounts: mounts) }
         }
     }
 
@@ -241,6 +249,7 @@ final class AppModel: ObservableObject {
                 readOnly: true
             ) else { return }
             preferences.source = bookmark
+            rememberBookmarkPath(bookmark, mounts: folderMounts())
             sourceReadStatus = .notGranted
             generation += 1
             sourceScope = nil
@@ -368,10 +377,12 @@ final class AppModel: ObservableObject {
         isChecking = true
         sourceReadStatus = .checking
         let snapshot = preferences
+        let previousPaths = folderPaths
+        let folderMounts = folderMounts
         let currentGeneration = generation
         scanTask = Task {
             do {
-                let result = try await Task.detached(priority: .utility) { try Self.scan(bookmark, preferences: snapshot, resolveFolder: environment.resolveFolder) }.value
+                let result = try await Task.detached(priority: .utility) { try Self.scan(bookmark, preferences: snapshot, previousPaths: previousPaths, mounts: folderMounts(), resolveFolder: environment.resolveFolder) }.value
                 guard currentGeneration == generation else {
                     isChecking = false
                     scanTask = nil
@@ -468,18 +479,20 @@ final class AppModel: ObservableObject {
         return .unconfirmed
     }
 
-    private nonisolated static func scan(_ bookmark: Data, preferences: Preferences, resolveFolder: @Sendable (Data) throws -> FolderAccess) throws -> ScanResult {
+    private nonisolated static func scan(_ bookmark: Data, preferences: Preferences, previousPaths: [Data: String], mounts: [FolderPathDisplay.Mount], resolveFolder: @Sendable (Data) throws -> FolderAccess) throws -> ScanResult {
         let source: FolderAccess
         do { source = try resolveFolder(bookmark) }
         catch { throw SourceScanFailure(message: error.localizedDescription, sourcePath: nil, readStatus: sourceFailureStatus(error)) }
         defer { withExtendedLifetime(source) {} }
+        let sourcePath = FolderPathDisplay.label(for: source.url.path, mounts: mounts, previous: previousPaths[bookmark])
         let databases: [Database]
         do { databases = try StrongboxCatalog.read(groupContainer: source.url) }
         catch {
-            throw SourceScanFailure(message: error.localizedDescription, sourcePath: source.url.path, readStatus: sourceFailureStatus(error))
+            throw SourceScanFailure(message: error.localizedDescription, sourcePath: sourcePath, readStatus: sourceFailureStatus(error))
         }
         let active = databases.filter { preferences.databases[$0.id.uuidString]?.enabled == true }
         var targets: [UUID: FolderAccess] = [:]
+        var targetNames: [UUID: String] = [:]
         defer { withExtendedLifetime(targets) {} }
         var states: [UUID: DatabaseState] = [:]
         var destinations: [CopyDestination] = []
@@ -489,7 +502,9 @@ final class AppModel: ObservableObject {
             do {
                 guard let data = preferences.databases[database.id.uuidString]?.target ?? preferences.defaultTarget else { throw ConfigurationError.missingTarget }
                 let folder = try resolveFolder(data)
-                folderPaths[data] = folder.url.path
+                let path = FolderPathDisplay.label(for: folder.url.path, mounts: mounts, previous: previousPaths[data])
+                folderPaths[data] = path
+                targetNames[database.id] = path
                 let destination = CopyDestination(databaseID: database.id, directory: folder.url, filename: database.filename)
                 _ = try DestinationPlanner.conflictingDatabaseIDs([destination], sourceRoot: source.url)
                 destinations.append(destination)
@@ -503,11 +518,11 @@ final class AppModel: ObservableObject {
         for database in active {
             guard states[database.id] == nil else { continue }
             if conflicts.contains(database.id) {
-                states[database.id] = DatabaseState(checked: Date(), targetName: targets[database.id]?.url.path, error: ConfigurationError.collidingDestination.localizedDescription)
+                states[database.id] = DatabaseState(checked: Date(), targetName: targetNames[database.id], error: ConfigurationError.collidingDestination.localizedDescription)
                 continue
             }
             guard let target = targets[database.id] else { continue }
-            var state = DatabaseState(checked: Date(), targetName: target.url.path)
+            var state = DatabaseState(checked: Date(), targetName: targetNames[database.id])
             do {
                 state.backup = try StrongboxBackups.newest(for: database, groupContainer: source.url)
             } catch {
@@ -523,7 +538,7 @@ final class AppModel: ObservableObject {
             }
             states[database.id] = state
         }
-        return ScanResult(sourcePath: source.url.path, folderPaths: folderPaths, sourcePermissionDenied: sourcePermissionDenied, databases: databases, states: states)
+        return ScanResult(sourcePath: sourcePath, folderPaths: folderPaths, sourcePermissionDenied: sourcePermissionDenied, databases: databases, states: states)
     }
 
     private func armMonitor() {

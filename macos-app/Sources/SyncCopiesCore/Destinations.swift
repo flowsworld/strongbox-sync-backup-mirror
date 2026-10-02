@@ -30,7 +30,7 @@ public enum DestinationPlanner {
         let sourcePath = normalizedDestinationName(sourceRoot.resolvingSymlinksInPath().standardizedFileURL.path)
         var groups: [DestinationIdentity: [UUID]] = [:]
         for destination in destinations {
-            guard validFilename(destination.filename) else { throw MirrorError.unsafeFilename }
+            guard validDestinationFilename(destination.filename) else { throw MirrorError.unsafeFilename }
             let directory = try openDirectory(destination.directory)
             let stamp = try directory.stamp()
             let path = normalizedDestinationName(destination.directory.resolvingSymlinksInPath().standardizedFileURL.path)
