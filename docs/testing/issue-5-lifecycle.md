@@ -286,3 +286,41 @@ einer vollständigen, unabhängig byteverglichenen 8-GiB-Kopie. Der höchste
 abgetastete RSS-Wert betrug 57.984 KiB. Große Quelle und Ziel wurden entfernt,
 die gespeicherte SMB-Auswahl wiederhergestellt und genau eine QA-Instanz gestartet.
 Dies belegt weiterhin den nativen Beendenpfad, keinen GUI-Menüklick.
+
+
+### Abgeschlossener SMB-Ausfalltest und Aufräumen
+
+Flo deaktivierte den Netzwerkport des Windows-PCs; ein laufender Ping zeigte
+anschließend Timeouts. Nach einem neu erzeugten künstlichen Backup speicherte
+die QA-App für Test Privat den Fehler `No route to host`. Test Arbeit konnte
+weiterhin in das eigene lokale Ziel kopieren. Flo aktivierte den Port wieder.
+macOS hatte die Freigabe inzwischen ausgehängt; Finder verband sie erneut, und
+Flo bestätigte den bereits ausgefüllten Verbindungsdialog.
+
+Vor dem erneuten Kopierversuch entsprach die vorhandene SMB-Testdatei bytegenau
+einem früheren künstlichen Backup und unterschied sich vom inzwischen neueren
+Backup. Die alte Kopie war also während des Ausfalls erhalten geblieben. Ein
+weiteres echtes Dateiereignis löste die automatische Wiederholungsprüfung aus.
+Beide Zielkopien waren danach bytegleich mit ihren neuesten Quellen; der gespeicherte
+SMB-Fehler war gelöscht. Das Protokoll liegt lokal unter
+`macos-app/build/qa-evidence/issue-5-smb-disconnect-retest.json`.
+
+Der Testassistent wurde beendet, und die einzige laufende QA-App wurde geordnet
+beendet. Die QA-App, ihr separater Container, lokale künstliche Testdaten und
+Hilfsprogramme sowie der ausschließlich für diesen Test angelegte SMB-Ordner
+wurden entfernt. Die zuvor ebenfalls von der QA-App erzeugte künstliche Kopie
+und Sperrdatei im Freigabewurzelordner wurden nach Inhaltsprüfung entfernt.
+Persönliche Freigabedateien blieben unberührt. Die abschließende Prüfung des
+BTM-Dumps und der Benutzer-Launchdienste fand keine QA-Anmeldeobjekte. Es wurde
+kein BTM-Reset ausgeführt. Ergebnisdateien bleiben unter `qa-evidence`; das
+Aufräumprotokoll ist `issue-5-final-cleanup.json`.
+
+Auf Flos Wunsch stehen Strongbox-Zugriff und die Einstellung des gemeinsamen
+Zielordners ausschließlich unter Allgemein. Datenbanken zeigt weiterhin das
+wirksame Ziel jeder Datenbank und erlaubt eigene Zielordner. Die beiden globalen
+Einstellungsbereiche wurden dort entfernt. Dies ist eine kleine UI-Bereinigung
+ohne Änderung der Kopier- oder Freigabelogik; zusätzliche Diff-Reviews wurden
+für diese triviale Änderung ausgelassen. Der Release-Build prüft die Ansicht.
+GUI-Menübeenden, tatsächlicher OS-Bookmark-Entzug und unterstützte ältere
+macOS-Versionen bleiben weiterhin separat zu prüfen. Der Ausfall- und
+Wiederverbindungstest der konkreten Windows-SMB-Freigabe ist abgeschlossen.

@@ -87,16 +87,10 @@ struct SettingsView: View {
                 Text("Die App kopiert ausschließlich lokale Backups deiner Strongbox-Sync-Datenbanken. Änderungen an den Kopien werden nicht zurück zu Strongbox übertragen und beim nächsten erfolgreichen Abgleich überschrieben.")
                     .font(.callout).frame(maxWidth: .infinity, alignment: .leading)
             }
-            GroupBox("Strongbox-Zugriff") { sourceAccess }
             if !model.sourceGranted {
-                Text("Erlaube zuerst den Lesezugriff auf Strongbox. Die App zeigt anschließend die gefundenen Datenbanken.")
+                Text("Erlaube unter Allgemein zuerst den Lesezugriff auf Strongbox. Die App zeigt anschließend die gefundenen Datenbanken.")
                     .foregroundStyle(.secondary)
             } else {
-                HStack(alignment: .top) {
-                    folderPath(model.commonTargetName)
-                    Spacer()
-                    Button("Gemeinsames Ziel ändern…") { model.chooseTarget() }.disabled(model.isDemo || model.isChecking)
-                }
                 if model.databases.isEmpty {
                     Text("Keine Strongbox-Sync-Datenbank gefunden.").foregroundStyle(.secondary)
                 }
