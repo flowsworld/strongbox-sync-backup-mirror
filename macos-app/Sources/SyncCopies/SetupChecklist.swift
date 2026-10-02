@@ -7,7 +7,7 @@ struct SetupChecklist: View {
     var body: some View {
         GroupBox(L10n.text("Prepare your first copy")) {
             VStack(alignment: .leading, spacing: 18) {
-                step(1, complete: model.sourceReadStatus == .available,
+                step(1, complete: model.sourceReadStatus == .available && model.preferences.globalFailure == nil,
                      title: "Read Strongbox", description: "The app uses the newest local backup.") {
                     Button(L10n.text("Allow access…")) { model.chooseSource() }
                         .disabled(!model.canChooseSource)
