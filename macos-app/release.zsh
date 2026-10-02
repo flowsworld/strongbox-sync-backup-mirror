@@ -50,6 +50,7 @@ release_lock="$release_dir.lock"
 mkdir "$release_lock" || { print -u2 'This release is already being packaged.'; exit 1; }
 staging=''
 trap '[[ -z "$staging" ]] || rm -rf -- "$staging"; rmdir "$release_lock"' EXIT
+trap 'exit 130' HUP INT TERM
 [[ ! -e "$release_dir" && ! -L "$release_dir" ]] || {
     print -u2 'That release already exists. Choose a new build number.'; exit 1
 }
@@ -60,6 +61,9 @@ plist="$app_bundle/Contents/Info.plist"
 plutil -replace CFBundleShortVersionString -string "$version" "$plist"
 plutil -replace CFBundleVersion -string "$build_number" "$plist"
 plutil -insert DIESISDistributionChannel -string "$channel" "$plist"
+# App payloads are readable/executable by other users after installation.
+# The enclosing artifacts and build records remain private to this checkout owner.
+chmod -R u=rwX,go=rX "$app_bundle"
 
 if [[ "$channel" == direct ]]; then
     codesign --force --sign "$identity" --options runtime --timestamp \
