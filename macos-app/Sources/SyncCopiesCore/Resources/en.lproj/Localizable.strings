@@ -164,3 +164,77 @@
 "Read access not confirmed yet" = "Read access not confirmed yet";
 "Another instance of the app is already running. Please close it." = "Another instance of the app is already running. Please close it.";
 "The app lock file cannot be accessed safely." = "The app lock file cannot be accessed safely.";
+
+"Prepare your first copy" = "Prepare your first copy";
+
+"Read Strongbox" = "Read Strongbox";
+
+"The app uses the newest local backup." = "The app uses the newest local backup.";
+
+"Choose where copies go" = "Choose where copies go";
+
+"A shared destination for your databases." = "A shared destination for your databases.";
+
+"Select databases" = "Select databases";
+
+"The list appears after read access is allowed." = "The list appears after read access is allowed.";
+
+"Choose folder…" = "Choose folder…";
+
+"Go to databases" = "Go to databases";
+
+"Only local Strongbox Sync backups are copied. The app never uploads files or writes back to Strongbox. Changes to copies are replaced on the next successful reconciliation." = "Only local Strongbox Sync backups are copied. The app never uploads files or writes back to Strongbox. Changes to copies are replaced on the next successful reconciliation.";
+
+"Google Drive is optional and can be set up later on its own page." = "Google Drive is optional and can be set up later on its own page.";
+
+"Complete" = "Complete";
+
+"Step %@" = "Step %@";
+
+"Info" = "Info";
+
+"Version" = "Version";
+
+"Build" = "Build";
+
+"Distribution" = "Distribution";
+
+"Development" = "Development";
+
+"Direct distribution" = "Direct distribution";
+
+"Mac App Store" = "Mac App Store";
+
+"Updates" = "Updates";
+
+"Check for updates…" = "Check for updates…";
+
+"Automatically check for updates" = "Automatically check for updates";
+
+"Automatically download and install updates" = "Automatically download and install updates";
+
+"Updates are not configured for this build." = "Updates are not configured for this build.";
+
+"Updates are disabled in the preview." = "Updates are disabled in the preview.";
+
+"This development build does not check for updates." = "This development build does not check for updates.";
+
+"Updates are delivered through the Mac App Store." = "Updates are delivered through the Mac App Store.";
+
+"Open in the Mac App Store" = "Open in the Mac App Store";
+
+"The Mac App Store link is not configured." = "The Mac App Store link is not configured.";
+
+"The updater could not be started." = "The updater could not be started.";
+
+"Preparing update installation…" = "Preparing update installation…";
+
+"Update installation is blocked because settings could not be saved." = "Update installation is blocked because settings could not be saved.";
+
+"Retry update installation" = "Retry update installation";
+
+"Installation waits until the current copy and check have finished." = "Installation waits until the current copy and check have finished.";
+
+"Automatic updates follow your Mac App Store settings." = "Automatic updates follow your Mac App Store settings.";
+
+"The update could not be completed." = "The update could not be completed.";

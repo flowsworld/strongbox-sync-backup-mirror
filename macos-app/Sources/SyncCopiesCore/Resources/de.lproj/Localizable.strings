@@ -164,3 +164,77 @@
 "Read access not confirmed yet" = "Lesezugriff noch nicht bestätigt";
 "Another instance of the app is already running. Please close it." = "Eine weitere Instanz der App läuft bereits. Bitte diese schließen.";
 "The app lock file cannot be accessed safely." = "Die Sperrdatei der App ist nicht sicher zugänglich.";
+
+"Prepare your first copy" = "Erste Kopie vorbereiten";
+
+"Read Strongbox" = "Strongbox lesen";
+
+"The app uses the newest local backup." = "Die App verwendet das neueste lokale Backup.";
+
+"Choose where copies go" = "Kopien ablegen";
+
+"A shared destination for your databases." = "Gemeinsamer Zielordner für deine Datenbanken.";
+
+"Select databases" = "Datenbanken auswählen";
+
+"The list appears after read access is allowed." = "Nach dem Lesezugriff erscheint die Auswahl.";
+
+"Choose folder…" = "Ordner wählen…";
+
+"Go to databases" = "Zu Datenbanken";
+
+"Only local Strongbox Sync backups are copied. The app never uploads files or writes back to Strongbox. Changes to copies are replaced on the next successful reconciliation." = "Die App kopiert nur lokale Strongbox-Sync-Backups. Sie lädt nichts hoch und schreibt nichts zu Strongbox zurück. Änderungen an Kopien ersetzt die App beim nächsten erfolgreichen Abgleich.";
+
+"Google Drive is optional and can be set up later on its own page." = "Google Drive ist später auf seiner eigenen Seite optional.";
+
+"Complete" = "Erledigt";
+
+"Step %@" = "Schritt %@";
+
+"Info" = "Info";
+
+"Version" = "Version";
+
+"Build" = "Build";
+
+"Distribution" = "Verteilung";
+
+"Development" = "Entwicklungsfassung";
+
+"Direct distribution" = "Direkt geladen";
+
+"Mac App Store" = "Mac App Store";
+
+"Updates" = "Updates";
+
+"Check for updates…" = "Nach Updates suchen…";
+
+"Automatically check for updates" = "Automatisch nach Updates suchen";
+
+"Automatically download and install updates" = "Updates automatisch laden und installieren";
+
+"Updates are not configured for this build." = "Updates sind für diese Fassung noch nicht eingerichtet.";
+
+"Updates are disabled in the preview." = "Updates sind in der Vorschau deaktiviert.";
+
+"This development build does not check for updates." = "Diese Entwicklungsfassung sucht nicht nach Updates.";
+
+"Updates are delivered through the Mac App Store." = "Updates kommen über den Mac App Store.";
+
+"Open in the Mac App Store" = "Im Mac App Store öffnen";
+
+"The Mac App Store link is not configured." = "Der Mac-App-Store-Link ist noch nicht eingerichtet.";
+
+"The updater could not be started." = "Der Updater konnte nicht gestartet werden.";
+
+"Preparing update installation…" = "Update-Installation vorbereiten…";
+
+"Update installation is blocked because settings could not be saved." = "Die Update-Installation ist blockiert, weil die Einstellungen nicht gespeichert werden konnten.";
+
+"Retry update installation" = "Update-Installation erneut versuchen";
+
+"Installation waits until the current copy and check have finished." = "Die Installation wartet, bis der laufende Kopiervorgang und die Prüfung abgeschlossen sind.";
+
+"Automatic updates follow your Mac App Store settings." = "Automatische Updates richten sich nach deinen Mac-App-Store-Einstellungen.";
+
+"The update could not be completed." = "Das Update konnte nicht abgeschlossen werden.";

@@ -17,7 +17,7 @@ struct Application {
             let result = CopyIntegrationTest.run(fixturesOnly: CommandLine.arguments.contains("--copy-test-fixtures"), targetURL: targetURL)
             exit(result)
         }
-        let delegate = ApplicationDelegate(demo: CommandLine.arguments.contains("--demo"))
+        let delegate = ApplicationDelegate(demo: CommandLine.arguments.contains("--demo") || CommandLine.arguments.contains("--setup-demo"), setupPreview: CommandLine.arguments.contains("--setup-demo"))
         application.setActivationPolicy(.accessory)
         application.delegate = delegate
         application.run()
@@ -28,13 +28,20 @@ struct Application {
 @MainActor
 final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let model: AppModel
+    private let updates: AppUpdates
     private var statusItem: NSStatusItem?
     private var window: NSWindow?
     private var observer: AnyCancellable?
     private var terminationPending = false
 
-    init(demo: Bool) {
-        model = AppModel(demo: demo)
+    init(demo: Bool, setupPreview: Bool = false) {
+        let model = AppModel(demo: demo, setupPreview: setupPreview)
+        self.model = model
+        updates = AppUpdates(demo: demo, resumeAfterCancelledUpdate: {
+            model.resumeAfterCancelledUpdate()
+        }, prepareForUpdate: {
+            await model.prepareForUpdate()
+        })
         super.init()
     }
 
@@ -58,7 +65,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
             Task { @MainActor in self?.updateIcon() }
         }
         model.onOpenSettings = { [weak self] in self?.showSettings() }
-        if !model.sourceGranted || model.isDemo { showSettings() }
+        updates.start()
+        if model.needsSetup || model.isDemo { showSettings() }
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
@@ -69,8 +77,16 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         guard !terminationPending else { return .terminateLater }
         terminationPending = true
         Task {
-            // Finish any atomic copy before releasing access and the instance lock.
-            await model.shutdown()
+            // Inspect the updater after active copies finish. A download may
+            // prepare an installer while this wait is suspended.
+            await model.quiesceForTermination()
+            if updates.requiresDurableQuit, !model.persistForUpdateTermination() {
+                model.cancelTermination()
+                terminationPending = false
+                sender.reply(toApplicationShouldTerminate: false)
+                return
+            }
+            model.completeShutdown()
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
@@ -106,7 +122,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
 
     private func updateIcon() {
         let warning = model.failureCount > 0 || model.problem != nil
-        statusItem?.button?.image = NSImage(systemSymbolName: warning ? "exclamationmark.triangle" : "doc.on.doc", accessibilityDescription: L10n.appName)
+        statusItem?.button?.image = (warning ? NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: L10n.appName) : AppIcon.image())
         statusItem?.button?.toolTip = L10n.format("%@: Active databases: %@, problems: %@", L10n.appName, L10n.count(model.activeCount), L10n.count(model.failureCount))
         statusItem?.button?.setAccessibilityLabel(statusItem?.button?.toolTip)
     }
@@ -125,7 +141,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
             window.title = L10n.format("%@ · Settings", L10n.appName)
             window.contentMinSize = NSSize(width: 740, height: 540)
             window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: SettingsView(model: model).environment(\.locale, L10n.locale))
+            window.contentView = NSHostingView(rootView: SettingsView(model: model, updates: updates).environment(\.locale, L10n.locale))
             window.center()
             self.window = window
         }

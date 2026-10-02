@@ -113,6 +113,91 @@ private final class ResolutionGate: @unchecked Sendable {
 
 @MainActor
 struct AppModelTests {
+    @Test func abortedInstallerCannotResumeCopiesDuringTerminationWait() async throws {
+        let fixture = try ModelFixture()
+        let gate = ResolutionGate()
+        let base = fixture.environment()
+        let resolve = base.resolveFolder
+        let environment = AppEnvironment(preferencesURL: base.preferencesURL, resolveFolder: { data in
+            if data == Data("source".utf8), !gate.hasEntered { gate.wait() }
+            return try resolve(data)
+        }, scheduler: base.scheduler, notifications: nil, loginStatus: base.loginStatus, setLogin: base.setLogin)
+        let model = AppModel(environment: environment)
+        defer { gate.release.signal() }
+        try #require(try await eventually { gate.hasEntered })
+        let updates = AppUpdates(demo: false, resumeAfterCancelledUpdate: { model.resumeAfterCancelledUpdate() }, prepareForUpdate: { true })
+        updates.installerDidStart()
+        let stop = Task { await model.quiesceForTermination() }
+        try #require(try await eventually { model.isStopping })
+        updates.cancelInstallation()
+        #expect(model.isStopping)
+        gate.release.signal()
+        await stop.value
+        #expect(model.isStopping)
+        #expect(!model.isChecking)
+        model.completeShutdown()
+        let replacement = AppModel(environment: fixture.environment())
+        #expect(!replacement.startupConflict)
+        await replacement.shutdown()
+    }
+
+    @Test func matchingExistingCopiesCompleteSetupWithoutWritingThem() async throws {
+        let fixture = try ModelFixture()
+        try Data("first encrypted fixture".utf8).write(to: fixture.common.appendingPathComponent(fixture.first.filename))
+        try Data("second encrypted fixture".utf8).write(to: fixture.override.appendingPathComponent(fixture.second.filename))
+        let model = AppModel(environment: fixture.environment())
+        try await settled(model)
+        #expect(!model.needsSetup)
+        #expect(model.preference(for: fixture.first).lastCopied == nil)
+        #expect(model.preference(for: fixture.first).lastReconciled != nil)
+        await model.shutdown()
+        let restarted = AppModel(environment: fixture.environment())
+        #expect(!restarted.needsSetup)
+        await restarted.shutdown()
+    }
+
+    @Test func cancelledUpdateReconcilesBackupChangesMadeWhileMonitoringWasPaused() async throws {
+        let fixture = try ModelFixture()
+        let model = AppModel(environment: fixture.environment())
+        try await settled(model)
+        #expect(await model.prepareForUpdate())
+        try fixture.backup(fixture.first, bytes: "changed during update pause", name: "during-update.bak")
+        model.resumeAfterCancelledUpdate()
+        #expect(try await eventually {
+            try Data(contentsOf: fixture.common.appendingPathComponent(fixture.first.filename)) == Data("changed during update pause".utf8)
+        })
+        await model.shutdown()
+    }
+
+    @Test func installerPreparedDuringTerminationWaitStillRequiresDurableState() async throws {
+        let fixture = try ModelFixture()
+        let gate = ResolutionGate()
+        let base = fixture.environment()
+        let resolve = base.resolveFolder
+        let environment = AppEnvironment(preferencesURL: base.preferencesURL, resolveFolder: { data in
+            if data == Data("source".utf8), !gate.hasEntered { gate.wait() }
+            return try resolve(data)
+        }, scheduler: base.scheduler, notifications: nil, loginStatus: base.loginStatus, setLogin: base.setLogin)
+        let model = AppModel(environment: environment)
+        defer { gate.release.signal() }
+        try #require(try await eventually { gate.hasEntered })
+        let updates = AppUpdates(demo: false, prepareForUpdate: { true })
+        #expect(!updates.requiresDurableQuit)
+        let stopping = Task { await model.quiesceForTermination() }
+        try #require(try await eventually { model.isStopping })
+        updates.installerDidStart()
+        gate.release.signal()
+        await stopping.value
+        #expect(updates.requiresDurableQuit)
+        try FileManager.default.removeItem(at: fixture.preferencesURL)
+        try FileManager.default.createDirectory(at: fixture.preferencesURL, withIntermediateDirectories: false)
+        #expect(!model.persistForUpdateTermination())
+        let duplicate = AppModel(environment: fixture.environment())
+        #expect(duplicate.startupConflict)
+        await duplicate.shutdown()
+        await model.shutdown()
+    }
+
     @Test func wrongSavedSourceAllowsCorrectionAndPreservesExistingCopy() async throws {
         let fixture = try ModelFixture()
         let target = fixture.common.appendingPathComponent(fixture.first.filename)
@@ -153,6 +238,69 @@ struct AppModelTests {
         #expect(model.preferences.globalFailure == nil)
         let target = fixture.override.appendingPathComponent(fixture.second.filename)
         #expect(try Data(contentsOf: target) == Data("second encrypted fixture".utf8))
+        await model.shutdown()
+    }
+
+    @Test func cancelledUpdatePreparationDoesNotOwnANewerAttempt() async throws {
+        let fixture = try ModelFixture()
+        let gate = ResolutionGate()
+        let base = fixture.environment()
+        let resolve = base.resolveFolder
+        let environment = AppEnvironment(preferencesURL: base.preferencesURL, resolveFolder: { data in
+            if data == Data("source".utf8), !gate.hasEntered { gate.wait() }
+            return try resolve(data)
+        }, scheduler: base.scheduler, notifications: nil, loginStatus: base.loginStatus, setLogin: base.setLogin)
+        let model = AppModel(environment: environment)
+        defer { gate.release.signal() }
+        try #require(try await eventually { gate.hasEntered })
+        let first = Task { await model.prepareForUpdate() }
+        try #require(try await eventually { model.isStopping })
+        first.cancel()
+        model.resumeAfterCancelledUpdate()
+        let second = Task { await model.prepareForUpdate() }
+        try #require(try await eventually { model.isStopping })
+        gate.release.signal()
+        #expect(!(await first.value))
+        #expect(await second.value)
+        #expect(model.isStopping)
+        await model.shutdown()
+    }
+
+    @Test func updatePreparationPreservesSettingsAndCopies() async throws {
+        let fixture = try ModelFixture()
+        let model = AppModel(environment: fixture.environment())
+        try await settled(model)
+        #expect(await model.prepareForUpdate())
+        #expect(model.isStopping)
+        let saved = try JSONDecoder().decode(Preferences.self, from: Data(contentsOf: fixture.preferencesURL))
+        #expect(saved.source == Data("source".utf8))
+        #expect(saved.defaultTarget == Data("common".utf8))
+        #expect(saved.databases[fixture.first.id.uuidString]?.lastCopied != nil)
+        #expect(!saved.history.isEmpty)
+        #expect(try Data(contentsOf: fixture.common.appendingPathComponent(fixture.first.filename)) == Data("first encrypted fixture".utf8))
+        await model.shutdown()
+    }
+
+    @Test func failedUpdateSaveLeavesModelUsableAndCopiesIntact() async throws {
+        let fixture = try ModelFixture()
+        let model = AppModel(environment: fixture.environment())
+        try await settled(model)
+        let settingsDirectory = fixture.preferencesURL.deletingLastPathComponent()
+        try FileManager.default.removeItem(at: settingsDirectory)
+        try Data("blocked settings directory".utf8).write(to: settingsDirectory)
+        #expect(!(await model.prepareForUpdate()))
+        #expect(!model.isStopping)
+        #expect(model.problem != nil)
+        #expect(try Data(contentsOf: fixture.common.appendingPathComponent(fixture.first.filename)) == Data("first encrypted fixture".utf8))
+        try FileManager.default.removeItem(at: settingsDirectory)
+        model.refresh()
+        try await settled(model)
+        #expect(model.problem == nil)
+        #expect(try JSONDecoder().decode(Preferences.self, from: Data(contentsOf: fixture.preferencesURL)).source == Data("source".utf8))
+        try fixture.backup(fixture.first, bytes: "changed after cancelled update", name: "after-update.bak")
+        #expect(try await eventually {
+            try Data(contentsOf: fixture.common.appendingPathComponent(fixture.first.filename)) == Data("changed after cancelled update".utf8)
+        })
         await model.shutdown()
     }
 

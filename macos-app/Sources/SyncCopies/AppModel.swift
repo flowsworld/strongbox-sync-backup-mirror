@@ -4,7 +4,7 @@ import Darwin
 import SyncCopiesCore
 
 enum SettingsPage: String, CaseIterable, Identifiable {
-    case general, databases, notifications, googleDrive, history
+    case general, databases, notifications, googleDrive, history, info
     var id: Self { self }
     var title: String {
         switch self {
@@ -13,6 +13,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .notifications: L10n.text("Notifications")
         case .googleDrive: L10n.text("Google Drive")
         case .history: L10n.text("History")
+        case .info: L10n.text("Info")
         }
     }
     var symbol: String {
@@ -22,6 +23,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .notifications: "bell"
         case .googleDrive: "checkmark.icloud"
         case .history: "clock"
+        case .info: "info.circle"
         }
     }
 }
@@ -30,6 +32,7 @@ struct DatabasePreferences: Codable, Sendable {
     var enabled = false
     var target: Data?
     var lastCopied: Date?
+    var lastReconciled: Date?
     var lastFailure: LocalizedMessage?
 }
 
@@ -117,6 +120,7 @@ enum ConfigurationError: LocalizedError, LocalizedMessageError {
 @MainActor
 final class AppModel: ObservableObject {
     let isDemo: Bool
+    let isSetupPreview: Bool
     @Published private(set) var preferences = Preferences()
     @Published private(set) var databases: [Database] = []
     @Published private(set) var states: [UUID: DatabaseState] = [:]
@@ -144,18 +148,26 @@ final class AppModel: ObservableObject {
     private var pendingNotifications: [PendingNotification] = []
     private var scanAgain = false
     private var generation = 0
+    private var updatePreparationGeneration = 0
+    private var isTerminating = false
     private var sourceScope: FolderAccess?
     private var monitoredPaths: Set<String> = []
     private var monitor: FileMonitor?
     private var notificationAttemptRunning = false
     private var notificationRevisions: [WritableKeyPath<NotificationPreferences, Bool>: Int] = [:]
 
-    init(demo: Bool = false, environment suppliedEnvironment: AppEnvironment? = nil, folderMounts: @escaping @Sendable () -> [FolderPathDisplay.Mount] = FolderPathDisplay.mountedSMBFolders) {
+    init(demo: Bool = false, setupPreview: Bool = false, environment suppliedEnvironment: AppEnvironment? = nil, folderMounts: @escaping @Sendable () -> [FolderPathDisplay.Mount] = FolderPathDisplay.mountedSMBFolders) {
         isDemo = demo
+        isSetupPreview = demo && setupPreview
         self.folderMounts = folderMounts
         environment = demo ? nil : (suppliedEnvironment ?? AppEnvironment.live())
         preferencesURL = environment?.preferencesURL ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/SyncCopies/preferences.json")
+        if isSetupPreview {
+            page = .general
+            notificationStatus = L10n.text("Preview with sample data")
+            return
+        }
         if demo {
             let privateDB = Database(id: UUID(), filename: "Personal.kdbx", displayName: L10n.text("Personal"))
             let workDB = Database(id: UUID(), filename: "Work.kdbx", displayName: L10n.text("Work"))
@@ -188,6 +200,7 @@ final class AppModel: ObservableObject {
             persistenceFailed = true
             problem = L10n.format("Saved settings could not be read. %@", LocalizedMessage.from(error).rendered())
         }
+        if needsSetup { page = .general }
         notifications?.discardStaleRequests()
         monitor = FileMonitor { [weak self] in
             self?.monitoredPaths = []
@@ -209,11 +222,14 @@ final class AppModel: ObservableObject {
         refresh()
     }
 
+    var needsSetup: Bool {
+        isSetupPreview || (!isDemo && !preferences.databases.values.contains { $0.enabled && ($0.lastReconciled != nil || $0.lastCopied != nil) })
+    }
     var activeCount: Int { databases.filter { preference(for: $0).enabled }.count }
     // A saved bookmark enables retrying; sourceReadStatus describes actual read access.
-    var sourceGranted: Bool { isDemo || preferences.source != nil }
-    var commonTargetName: String { isDemo ? "/Users/Beispiel/Google Drive/Lesekopien" : label(for: preferences.defaultTarget) }
-    var sourceFolderPath: String { isDemo ? "/Users/Beispiel/Library/Group Containers/group.strongbox.mac.mcguill" : label(for: preferences.source) }
+    var sourceGranted: Bool { (isDemo && !isSetupPreview) || preferences.source != nil }
+    var commonTargetName: String { isDemo && !isSetupPreview ? "/Users/Beispiel/Google Drive/Lesekopien" : label(for: preferences.defaultTarget) }
+    var sourceFolderPath: String { isDemo && !isSetupPreview ? "/Users/Beispiel/Library/Group Containers/group.strongbox.mac.mcguill" : label(for: preferences.source) }
     var canChooseSource: Bool {
         !isDemo && !isChecking && !isStopping && !loadFailed &&
         (sourceReadStatus != .available || preferences.globalFailure != nil)
@@ -360,7 +376,7 @@ final class AppModel: ObservableObject {
         loginNeedsApproval = login.needsApproval
     }
 
-    private func save() -> Bool {
+    private func save(durable: Bool = false) -> Bool {
         if isDemo { return true }
         guard !loadFailed else { return false }
         preferences.history = Array(preferences.history.prefix(200))
@@ -369,6 +385,7 @@ final class AppModel: ObservableObject {
             let data = try JSONEncoder().encode(preferences)
             try data.write(to: preferencesURL, options: .atomic)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: preferencesURL.path)
+            if durable { try synchronizeSettings() }
             persistenceFailed = false
             return true
         } catch {
@@ -378,14 +395,77 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func shutdown() async {
+    /// Quiesce copies without releasing the instance lock or folder grants. A
+    /// failed durable save cancels installation and restores normal scheduling.
+    func prepareForUpdate() async -> Bool {
+        if isDemo || isTerminating { return false }
+        updatePreparationGeneration += 1
+        let preparation = updatePreparationGeneration
         isStopping = true
         environment?.scheduler.stop()
         monitor?.stop()
+        monitoredPaths = []
         scanAgain = false
         await scanTask?.value
+        guard !Task.isCancelled, preparation == updatePreparationGeneration else { return false }
+        guard save(durable: true) else {
+            resumeAfterCancelledUpdate()
+            return false
+        }
+        return true
+    }
+
+    func resumeAfterCancelledUpdate() {
+        guard isStopping, !isTerminating else { return }
+        updatePreparationGeneration += 1
+        isStopping = false
+        monitoredPaths = []
+        environment?.scheduler.start { [weak self] in self?.refresh() }
+        armMonitor()
+        refresh()
+    }
+
+    private func synchronizeSettings() throws {
+        for (url, flags) in [(preferencesURL, O_RDONLY), (preferencesURL.deletingLastPathComponent(), O_RDONLY | O_DIRECTORY)] {
+            let descriptor = open(url.path, flags | O_NOFOLLOW | O_CLOEXEC)
+            guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            defer { _ = close(descriptor) }
+            while fsync(descriptor) != 0 {
+                if errno == EINTR { continue }
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+        }
+    }
+
+    func quiesceForTermination() async {
+        isTerminating = true
+        updatePreparationGeneration += 1
+        isStopping = true
+        environment?.scheduler.stop()
+        monitor?.stop()
+        monitoredPaths = []
+        scanAgain = false
+        await scanTask?.value
+    }
+
+    func persistForUpdateTermination() -> Bool {
+        isStopping && save(durable: true)
+    }
+
+    func cancelTermination() {
+        isTerminating = false
+        resumeAfterCancelledUpdate()
+    }
+
+    func completeShutdown() {
+        guard isStopping else { return }
         sourceScope = nil
         instanceLock = nil
+    }
+
+    func shutdown() async {
+        await quiesceForTermination()
+        completeShutdown()
     }
 
     func refresh() {
@@ -436,6 +516,7 @@ final class AppModel: ObservableObject {
                         }
                         preferences.databases[database.id.uuidString, default: DatabasePreferences()].lastFailure = failure
                     } else {
+                        preferences.databases[database.id.uuidString, default: DatabasePreferences()].lastReconciled = state.checked
                         pendingNotifications.removeAll { $0.databaseID == database.id.uuidString && $0.kind == \.failures }
                         if preference(for: database).lastFailure != nil {
                             preferences.databases[database.id.uuidString, default: DatabasePreferences()].lastFailure = nil

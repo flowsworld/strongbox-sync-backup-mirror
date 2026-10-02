@@ -5,7 +5,7 @@ setopt extendedglob
 umask 077
 
 usage() {
-    print -u2 'Usage: release.zsh development|direct VERSION BUILD [DEVELOPER_ID_IDENTITY]'
+    print -u2 'Usage: release.zsh development|direct|store VERSION BUILD [DEVELOPER_ID_IDENTITY]'
     print -u2 'VERSION is MAJOR.MINOR.PATCH; BUILD is a positive integer.'
 }
 (( $# >= 3 && $# <= 4 )) || { usage; exit 2; }
@@ -17,7 +17,7 @@ identity=${4:--}
     usage; exit 2
 }
 case "$channel" in
-    development)
+    development|store)
         (( $# == 3 )) || { usage; exit 2; }
         ;;
     direct)
@@ -57,22 +57,38 @@ trap 'exit 130' HUP INT TERM
 [[ ! -e "$release_dir" && ! -L "$release_dir" ]] || {
     print -u2 'That release already exists. Choose a new build number.'; exit 1
 }
+typeset -a update_flags=()
+if [[ "$channel" == direct ]]; then
+    [[ -n "${DIESIS_UPDATE_FEED_URL:-}" && -n "${DIESIS_UPDATE_PUBLIC_KEY:-}" ]] || {
+        print -u2 'Direct release candidates require DIESIS_UPDATE_FEED_URL and DIESIS_UPDATE_PUBLIC_KEY.'; exit 2
+    }
+    update_flags=(--feed-url "$DIESIS_UPDATE_FEED_URL" --public-key "$DIESIS_UPDATE_PUBLIC_KEY")
+elif [[ "$channel" == store && -n "${DIESIS_STORE_URL:-}" ]]; then
+    update_flags=(--store-url "$DIESIS_STORE_URL")
+fi
 staging=$(mktemp -d "$release_root/.package.XXXXXXXX")
 app_bundle="$staging/Sync-Kopien.app"
-/bin/zsh "$app_dir/build.zsh" --universal --output "$app_bundle"
+/bin/zsh "$app_dir/build.zsh" --universal --distribution "$channel" "${update_flags[@]}" --output "$app_bundle"
 plist="$app_bundle/Contents/Info.plist"
 plutil -replace CFBundleShortVersionString -string "$version" "$plist"
 plutil -replace CFBundleVersion -string "$build_number" "$plist"
-plutil -insert DIESISDistributionChannel -string "$channel" "$plist"
+plutil -replace DIESISDistributionChannel -string "$channel" "$plist"
 # App payloads are readable/executable by other users after installation.
 # The enclosing artifacts and build records remain private to this checkout owner.
 chmod -R u=rwX,go=rX "$app_bundle"
 
 if [[ "$channel" == direct ]]; then
+    framework="$app_bundle/Contents/Frameworks/Sparkle.framework"
+    for component in "$framework/Versions/B/XPCServices/Installer.xpc" \
+                     "$framework/Versions/B/Autoupdate" "$framework/Versions/B/Updater.app" "$framework"; do
+        codesign --force --sign "$identity" --options runtime --timestamp "$component"
+        codesign --verify --strict -R \
+            'anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists' "$component"
+    done
     codesign --force --sign "$identity" --options runtime --timestamp \
-        --entitlements "$app_dir/entitlements.plist" "$app_bundle"
+        --entitlements "$app_dir/entitlements-direct.plist" "$app_bundle"
     # Reject a non-Developer-ID certificate even when selected by its hash.
-    codesign --verify --strict -R \
+    codesign --verify --deep --strict -R \
         'anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists' \
         "$app_bundle"
 else
@@ -83,7 +99,7 @@ for architecture in arm64 x86_64; do
     lipo "$app_bundle/Contents/MacOS/SyncCopies" -verify_arch "$architecture"
 done
 xcrun vtool -show-build "$app_bundle/Contents/MacOS/SyncCopies" > "$staging/MACH_O_BUILD"
-ditto -c -k --keepParent "$app_bundle" "$staging/Sync-Kopien.zip"
+ditto -c -k --sequesterRsrc --keepParent "$app_bundle" "$staging/Sync-Kopien.zip"
 (
     cd "$staging"
     shasum -a 256 Sync-Kopien.zip > SHA256SUMS
@@ -108,5 +124,5 @@ print -r -- "$release_dir"
 if [[ "$channel" == direct ]]; then
     print -u2 'Signed candidate only. Notarization, stapling and Gatekeeper validation are still required.'
 else
-    print -u2 'Ad-hoc development candidate. It is not a distributable signed beta.'
+    print -u2 'Ad-hoc channel fixture. It is not a distributable signed beta or Store submission.'
 fi
