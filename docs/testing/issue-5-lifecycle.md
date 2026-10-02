@@ -5,6 +5,20 @@ Sie verwendet künstliche Strongbox-Metadaten und Backup-Inhalte, eigene tempor�
 Zielordner und eine separate Einstellungsdatei je Test. Der vorhandene Helfer,
 sein LaunchAgent, echte Strongbox-Dateien und tägliche Zielordner bleiben unberührt.
 
+## Abnahmestatus am 2. Oktober 2026
+
+Issue #5 ist zur Abnahme abgeschlossen. Die 61 nativen Tests und beide
+Python-CI-Jobs bestehen. Flos reale Login- und Wake-Prüfungen, der Ausfalltest
+der Windows-SMB-Freigabe und die nachstehend dokumentierten GUI-Prüfungen
+ergänzen die automatisierten Nachweise. Ältere macOS-Versionen werden auf
+Flos ausdrücklichen Wunsch nicht zusätzlich manuell getestet. Die
+Mindestversion im Produkt bleibt unverändert.
+
+Die folgenden Abschnitte dokumentieren den zeitlichen Verlauf. Darin genannte
+offene Schritte und noch vorhandene QA-Installationen beziehen sich jeweils
+auf den damaligen Stand. Der letzte Abschnitt beschreibt die abschließende
+Prüfung und Bereinigung.
+
 ## Automatisierte Prüfung
 
 ```sh
@@ -74,7 +88,7 @@ die entfernt wurde. Der Anforderungsreview fand keine weiteren Korrekturen.
 Die Suite umfasst insgesamt 30 native Tests. Den späteren tatsächlichen
 Prozessabbruch dokumentiert die folgende Prüfung der signierten App.
 
-## Manuelle Nachweise und offene Prüfungen
+## Manuelle Nachweise in zeitlicher Reihenfolge
 
 ### Signierte App mit künstlichen Daten am 1. Oktober 2026
 
@@ -324,3 +338,72 @@ für diese triviale Änderung ausgelassen. Der Release-Build prüft die Ansicht.
 GUI-Menübeenden, tatsächlicher OS-Bookmark-Entzug und unterstützte ältere
 macOS-Versionen bleiben weiterhin separat zu prüfen. Der Ausfall- und
 Wiederverbindungstest der konkreten Windows-SMB-Freigabe ist abgeschlossen.
+
+### Abschließende GUI- und OS-Bookmark-Prüfung
+
+Nach den wiederholten Abstürzen des Computer-Use-Helfers erlaubte Flo ausdrücklich
+AppleScript und System Events für die temporäre QA-App und ihre künstlichen
+Ordner. Die verbliebenen Prüfungen verwenden den normalen Release-Code von
+`f5c0985` auf macOS 27.0.1. Die Kopie hatte die Bundle-ID
+`cloud.diesis.sync-copies.qa-final20261002` und eigene Einstellungen.
+Nur Bundle-Metadaten und Ad-hoc-Signatur wurden angepasst. Nach Entfernen der
+Signaturen aus zwei temporären Vergleichskopien waren beide ausführbaren Dateien
+bytegleich. Es wurden keine UI-Testhaken in den Produktcode eingebaut.
+
+Quelle und Ziel wurden über die echten macOS-Ordnerdialoge gewählt. Anschließend
+wurde die App jeweils über ihren Menüeintrag beendet und der ausgewählte künstliche
+Ordner unter demselben Pfad mit neuer Dateisystemidentität angelegt. App-Identität
+und gespeicherter Bookmark blieben unverändert. Foundation erkannte beide
+Bookmarks tatsächlich als veraltet. Die vorhandene Zielkopie blieb in beiden
+Fehlerfällen unverändert. Eine erneute Auswahl im normalen Ordnerdialog erneuerte
+den jeweiligen Bookmark; die nächste Kopie war wieder bytegleich.
+
+Beim Quellenfehler zeigte Allgemein orange "Lesezugriff fehlgeschlagen" und
+erlaubte die erneute Freigabe. Nach der Wiederherstellung zeigte die Ansicht
+"Lesezugriff erlaubt" und deaktivierte "Erneut erlauben…". Ein veralteter
+Ziel-Bookmark änderte den geprüften Quellenstatus nicht. Dies belegt die
+OS-Invalidierung veralteter Sandbox-Bookmarks, keinen TCC-Widerruf. TCC und
+Sandbox-Erweiterungen sind getrennte Mechanismen; ein TCC-Reset wurde nicht
+verwendet. Siehe [Apple DTS zu Dateisystemberechtigungen](https://developer.apple.com/forums/thread/678819)
+und [Apple zu Sandbox-Dateizugriffen](https://developer.apple.com/documentation/security/accessing-files-from-the-macos-app-sandbox).
+
+Ein Klick auf den Text der Kopierdetails, 140 Bildschirmpunkte rechts vom linken
+Buttonrand und damit deutlich außerhalb des kleinen Pfeils, klappte die Details
+auf. Die Ansicht zeigt vollständige Pfade. Strongbox-Zugriff und die globale
+Zielauswahl stehen ausschließlich unter Allgemein; Datenbanken zeigt das wirksame
+Ziel und die eigenen Zielkontrollen.
+
+Der abschließende 8-GiB-Test verwendete einen tatsächlichen Klick auf
+"Sync-Kopien beenden" im Statusmenü. Beim Auslösen waren 140.509.184 Bytes in
+der temporären Datei geschrieben; die alte 57-Byte-Zieldatei war noch unverändert.
+Die App wartete auf die Kopie und beendete sich nach insgesamt 4,584 Sekunden.
+Ein unabhängiger blockweiser Vergleich bestätigte alle 8 GiB. Der bis zum
+Menüklick abgetastete RSS-Höchstwert betrug 105.664 KiB; diese Stichprobe ist kein
+Nachweis des gesamten Prozessmaximums. Große Quelle und Zielkopie wurden direkt
+nach dem Vergleich entfernt.
+
+Lokale Nachweise unter `macos-app/build/qa-evidence/`:
+
+| Nachweis | Dateien |
+| --- | --- |
+| Quellen-Bookmark und echte erneute Freigabe | `issue-5-source-bookmark-gui.json` und `issue-5-source-bookmark-gui.mov` |
+| Ziel-Bookmark und echte erneute Freigabe | `issue-5-target-bookmark-gui.json` und `issue-5-target-bookmark-gui.mov` |
+| Details-Klick, Quellenstatus und Menü-Beenden während 8 GiB | `issue-5-final-gui-retest.json`, `issue-5-menu-quit-8gib.mov` und `issue-5-databases-final.png` |
+| Abschlussbereinigung | `issue-5-final-gui-cleanup.json` |
+
+Die Aufnahmen wurden nach Abschluss auf lesbare Videospuren geprüft; die
+Quellenansicht nach erneuter Freigabe, die ausgeklappten Datenbankdetails und
+das tatsächliche Statusmenü wurden zusätzlich visuell kontrolliert. Fehlversuche
+des Aufnahmeprogramms änderten das Produkt nicht. Die erfolgreichen Aufnahmen
+bleiben lokal und werden nicht öffentlich hochgeladen.
+
+Die abschließende QA-App war nie als Anmeldeobjekt aktiviert. Nach geordnetem
+Beenden liefen keine Instanzen dieser QA-App mehr. Bundle, eigener Container,
+künstliche Quelle und Ziel, Probeprogramme und das doppelte Build-Bundle wurden
+entfernt. Nur die kleinen Ergebnisdateien und Aufnahmen bleiben zur Durchsicht.
+Die früheren manuellen Fehlversuche bleiben als historische Nachweise erhalten.
+
+Diese letzten Änderungen betreffen ausschließlich die Nachweisdokumentation.
+Zusätzliche Diff-Reviews und erneut ausgeführte lokale Produkttests wurden
+dafür ausgelassen. Die zuvor abgeschlossenen unabhängigen Code-Reviews und
+der einmalige externe Codex-Review gelten weiterhin.
