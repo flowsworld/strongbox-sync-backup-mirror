@@ -219,7 +219,7 @@ struct SettingsView: View {
 
     private var googleDrive: some View {
         VStack(alignment: .leading, spacing: 20) {
-            heading(L10n.text(L10n.text("Google Drive")), L10n.text("The optional upload check is coming in an update."))
+            heading(L10n.text("Google Drive"), L10n.text("The optional upload check is coming in an update."))
             GroupBox {
                 VStack(alignment: .leading, spacing: 12) {
                     Label(L10n.text("Planned update"), systemImage: "checkmark.icloud").font(.headline)
