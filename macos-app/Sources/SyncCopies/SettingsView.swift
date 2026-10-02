@@ -4,6 +4,7 @@ import SyncCopiesCore
 
 struct SettingsView: View {
     @ObservedObject var model: AppModel
+    @ObservedObject var updates: AppUpdates
 
     var body: some View {
         HStack(spacing: 0) {
@@ -41,6 +42,7 @@ struct SettingsView: View {
         case .notifications: notifications
         case .googleDrive: googleDrive
         case .history: history
+        case .info: InfoView(updates: updates)
         }
     }
 

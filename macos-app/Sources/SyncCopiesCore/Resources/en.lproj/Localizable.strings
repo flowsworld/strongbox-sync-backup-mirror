@@ -190,3 +190,47 @@
 "Complete" = "Complete";
 
 "Step %@" = "Step %@";
+
+"Info" = "Info";
+
+"Version" = "Version";
+
+"Build" = "Build";
+
+"Distribution" = "Distribution";
+
+"Development" = "Development";
+
+"Direct distribution" = "Direct distribution";
+
+"Mac App Store" = "Mac App Store";
+
+"Updates" = "Updates";
+
+"Check for updates…" = "Check for updates…";
+
+"Automatically check for updates" = "Automatically check for updates";
+
+"Automatically download and install updates" = "Automatically download and install updates";
+
+"Updates are not configured for this build." = "Updates are not configured for this build.";
+
+"Updates are disabled in the preview." = "Updates are disabled in the preview.";
+
+"This development build does not check for updates." = "This development build does not check for updates.";
+
+"Updates are delivered through the Mac App Store." = "Updates are delivered through the Mac App Store.";
+
+"Open in the Mac App Store" = "Open in the Mac App Store";
+
+"The Mac App Store link is not configured." = "The Mac App Store link is not configured.";
+
+"The updater could not be started." = "The updater could not be started.";
+
+"Preparing update installation…" = "Preparing update installation…";
+
+"Update installation is blocked because settings could not be saved." = "Update installation is blocked because settings could not be saved.";
+
+"Retry update installation" = "Retry update installation";
+
+"The update could not be completed." = "The update could not be completed.";

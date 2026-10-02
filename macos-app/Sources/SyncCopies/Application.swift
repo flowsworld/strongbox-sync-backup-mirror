@@ -28,13 +28,20 @@ struct Application {
 @MainActor
 final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let model: AppModel
+    private let updates: AppUpdates
     private var statusItem: NSStatusItem?
     private var window: NSWindow?
     private var observer: AnyCancellable?
     private var terminationPending = false
 
     init(demo: Bool, setupPreview: Bool = false) {
-        model = AppModel(demo: demo, setupPreview: setupPreview)
+        let model = AppModel(demo: demo, setupPreview: setupPreview)
+        self.model = model
+        updates = AppUpdates(demo: demo, resumeAfterCancelledUpdate: {
+            model.resumeAfterCancelledUpdate()
+        }, prepareForUpdate: {
+            await model.prepareForUpdate()
+        })
         super.init()
     }
 
@@ -58,7 +65,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
             Task { @MainActor in self?.updateIcon() }
         }
         model.onOpenSettings = { [weak self] in self?.showSettings() }
-        if !model.sourceGranted || model.isDemo { showSettings() }
+        updates.start()
+        if model.needsSetup || model.isDemo { showSettings() }
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
@@ -69,7 +77,12 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         guard !terminationPending else { return .terminateLater }
         terminationPending = true
         Task {
-            // Finish any atomic copy before releasing access and the instance lock.
+            // Install-on-quit must use the same durable gate as a prompted update.
+            if updates.isInstallingUpdate, !(await model.prepareForUpdate()) {
+                terminationPending = false
+                sender.reply(toApplicationShouldTerminate: false)
+                return
+            }
             await model.shutdown()
             sender.reply(toApplicationShouldTerminate: true)
         }
@@ -125,7 +138,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
             window.title = L10n.format("%@ · Settings", L10n.appName)
             window.contentMinSize = NSSize(width: 740, height: 540)
             window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: SettingsView(model: model).environment(\.locale, L10n.locale))
+            window.contentView = NSHostingView(rootView: SettingsView(model: model, updates: updates).environment(\.locale, L10n.locale))
             window.center()
             self.window = window
         }

@@ -124,7 +124,12 @@ cat > "$app_bundle/Contents/Info.plist" <<'PLIST'
   <key>LSMinimumSystemVersion</key><string>13.0</string>
 </dict></plist>
 PLIST
+# Produce all icon sizes from the same approved drawing used by the menu bar.
+xcrun swiftc "$app_dir/Sources/SyncCopies/AppIcon.swift" "$app_dir/scripts/GenerateIcon.swift" -o "$staging/icon-generator"
+"$staging/icon-generator" "$staging/AppIcon.iconset"
+iconutil -c icns "$staging/AppIcon.iconset" -o "$app_bundle/Contents/Resources/AppIcon.icns"
 plist="$app_bundle/Contents/Info.plist"
+plutil -insert CFBundleIconFile -string AppIcon "$plist"
 plutil -insert DIESISDistributionChannel -string "$channel" "$plist"
 entitlements="$app_dir/entitlements.plist"
 if [[ "$channel" == store && -n "$store_url" ]]; then
@@ -148,10 +153,10 @@ PYLOCK
     rm -rf -- "$framework/Versions/B/XPCServices/Downloader.xpc"
     mkdir -p "$app_bundle/Contents/Resources/ThirdParty"
     cp "$app_dir/ThirdParty/Sparkle-LICENSE.txt" "$app_bundle/Contents/Resources/ThirdParty/"
-    for key in SUEnableInstallerLauncherService SUVerifyUpdateBeforeExtraction SURequireSignedFeed; do
+    for key in SUEnableInstallerLauncherService SUVerifyUpdateBeforeExtraction SURequireSignedFeed SUEnableAutomaticChecks; do
         plutil -insert "$key" -bool true "$plist"
     done
-    for key in SUEnableDownloaderService SUEnableAutomaticChecks SUAutomaticallyUpdate SUEnableSystemProfiling SUEnableJavaScript; do
+    for key in SUEnableDownloaderService SUAutomaticallyUpdate SUEnableSystemProfiling SUEnableJavaScript; do
         plutil -insert "$key" -bool false "$plist"
     done
     plutil -insert SUSignedFeedFailureExpirationInterval -integer 0 "$plist"

@@ -4,7 +4,7 @@ import Darwin
 import SyncCopiesCore
 
 enum SettingsPage: String, CaseIterable, Identifiable {
-    case general, databases, notifications, googleDrive, history
+    case general, databases, notifications, googleDrive, history, info
     var id: Self { self }
     var title: String {
         switch self {
@@ -13,6 +13,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .notifications: L10n.text("Notifications")
         case .googleDrive: L10n.text("Google Drive")
         case .history: L10n.text("History")
+        case .info: L10n.text("Info")
         }
     }
     var symbol: String {
@@ -22,6 +23,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .notifications: "bell"
         case .googleDrive: "checkmark.icloud"
         case .history: "clock"
+        case .info: "info.circle"
         }
     }
 }
@@ -195,7 +197,7 @@ final class AppModel: ObservableObject {
             persistenceFailed = true
             problem = L10n.format("Saved settings could not be read. %@", LocalizedMessage.from(error).rendered())
         }
-        if preferences.source == nil { page = .general }
+        if needsSetup { page = .general }
         notifications?.discardStaleRequests()
         monitor = FileMonitor { [weak self] in
             self?.monitoredPaths = []

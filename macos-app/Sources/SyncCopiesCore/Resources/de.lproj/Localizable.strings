@@ -190,3 +190,47 @@
 "Complete" = "Erledigt";
 
 "Step %@" = "Schritt %@";
+
+"Info" = "Info";
+
+"Version" = "Version";
+
+"Build" = "Build";
+
+"Distribution" = "Verteilung";
+
+"Development" = "Entwicklungsfassung";
+
+"Direct distribution" = "Direkt geladen";
+
+"Mac App Store" = "Mac App Store";
+
+"Updates" = "Updates";
+
+"Check for updates…" = "Nach Updates suchen…";
+
+"Automatically check for updates" = "Automatisch nach Updates suchen";
+
+"Automatically download and install updates" = "Updates automatisch laden und installieren";
+
+"Updates are not configured for this build." = "Updates sind für diese Fassung noch nicht eingerichtet.";
+
+"Updates are disabled in the preview." = "Updates sind in der Vorschau deaktiviert.";
+
+"This development build does not check for updates." = "Diese Entwicklungsfassung sucht nicht nach Updates.";
+
+"Updates are delivered through the Mac App Store." = "Updates kommen über den Mac App Store.";
+
+"Open in the Mac App Store" = "Im Mac App Store öffnen";
+
+"The Mac App Store link is not configured." = "Der Mac-App-Store-Link ist noch nicht eingerichtet.";
+
+"The updater could not be started." = "Der Updater konnte nicht gestartet werden.";
+
+"Preparing update installation…" = "Update-Installation vorbereiten…";
+
+"Update installation is blocked because settings could not be saved." = "Die Update-Installation ist blockiert, weil die Einstellungen nicht gespeichert werden konnten.";
+
+"Retry update installation" = "Update-Installation erneut versuchen";
+
+"The update could not be completed." = "Das Update konnte nicht abgeschlossen werden.";
