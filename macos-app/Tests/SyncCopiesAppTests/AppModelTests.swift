@@ -124,6 +124,34 @@ private final class ModelNotificationGate {
 
 @MainActor
 struct AppModelTests {
+    @Test func abortedInstallerCannotResumeProviderDuringTerminationWait() async throws {
+        let fixture = try ModelFixture()
+        let gate = ResolutionGate()
+        let base = fixture.environment()
+        let resolve = base.resolveFolder
+        let environment = AppEnvironment(preferencesURL: base.preferencesURL, resolveFolder: { data in
+            if data == Data("source".utf8), !gate.hasEntered { gate.wait() }
+            return try resolve(data)
+        }, scheduler: base.scheduler, notifications: nil, loginStatus: base.loginStatus, setLogin: base.setLogin)
+        let model = AppModel(environment: environment)
+        defer { gate.release.signal() }
+        try #require(try await eventually { gate.hasEntered })
+        let drive = DriveVerificationController(settingsURL: fixture.root.appendingPathComponent("drive.json"), environment: nil)
+        let preparation = AppUpdatePreparation(model: model, drive: drive)
+        #expect(await drive.quiesceAndPersist())
+        let stop = Task { await model.quiesceForTermination() }
+        try #require(try await eventually { model.isStopping })
+        preparation.resume()
+        #expect(!drive.canChangeSettings)
+        gate.release.signal()
+        await stop.value
+        #expect(!drive.canChangeSettings)
+        model.cancelTermination()
+        preparation.resume()
+        #expect(drive.canChangeSettings)
+        await model.shutdown()
+    }
+
     @Test func abortedInstallerCannotResumeCopiesDuringTerminationWait() async throws {
         let fixture = try ModelFixture()
         let gate = ResolutionGate()

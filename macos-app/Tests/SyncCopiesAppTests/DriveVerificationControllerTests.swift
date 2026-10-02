@@ -62,6 +62,20 @@ private actor DriveSnapshotGate {
     func release() { continuation?.resume(); continuation = nil }
 }
 
+private actor DriveAccountCleanupGate {
+    private(set) var calls = 0
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+    func wait() async {
+        calls += 1
+        await withCheckedContinuation { continuations.append($0) }
+    }
+    func release() {
+        let waiting = continuations
+        continuations.removeAll()
+        waiting.forEach { $0.resume() }
+    }
+}
+
 @MainActor
 private final class DriveControllerFixture {
     let root: URL
@@ -80,6 +94,7 @@ private final class DriveControllerFixture {
     var deliveryFails = false
     var permissionDenied = false
     var snapshotGate: DriveSnapshotGate?
+    var accountCleanupGate: DriveAccountCleanupGate?
 
     init() throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -88,7 +103,11 @@ private final class DriveControllerFixture {
     var settingsURL: URL { root.appendingPathComponent("drive-settings.json") }
     var environment: DriveVerificationEnvironment {
         let server = server
-        return DriveVerificationEnvironment(listAccounts: { await server.accounts() }, connect: { await server.connect() },
+        let cleanupGate = accountCleanupGate
+        return DriveVerificationEnvironment(listAccounts: {
+            if let cleanupGate { await cleanupGate.wait() }
+            return await server.accounts()
+        }, connect: { await server.connect() },
             cancelConnect: { await server.cancelConnection() }, disconnect: { _ in await server.disconnect() }, resolveFolder: { _, id in try await server.folder(id) },
             remoteFile: { _, _, _ in try await server.query() }, localInputs: { [self] in
                 if let catalogFailure { throw catalogFailure }
@@ -149,6 +168,37 @@ private final class DriveControllerFixture {
 
 @MainActor
 struct DriveVerificationControllerTests {
+    @Test func shutdownWaitsForStartedCredentialCleanupAndRejectsNewStarts() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        let gate = DriveAccountCleanupGate()
+        fixture.accountCleanupGate = gate
+        let controller = fixture.controller()
+        let initialLoad = Task { await controller.start() }
+        for _ in 0..<10_000 {
+            if await gate.calls > 0 { break }
+            await Task.yield()
+        }
+        #expect(await gate.calls == 1)
+        var shutdownFinished = false
+        let shutdown = Task {
+            let ready = await controller.quiesceAndPersist()
+            shutdownFinished = true
+            return ready
+        }
+        for _ in 0..<100 { await Task.yield() }
+        #expect(!shutdownFinished)
+        let stoppedLoad = Task { await controller.start() }
+        for _ in 0..<100 { await Task.yield() }
+        #expect(await gate.calls == 1)
+        await gate.release()
+        await initialLoad.value
+        await stoppedLoad.value
+        #expect(await shutdown.value)
+        #expect(controller.accounts.isEmpty)
+        #expect(controller.failure == nil)
+    }
+
     @Test func accountCleanupStatusIsPublishedAndRefreshedWithoutRequiredFixtureHooks() async throws {
         let fixture = try DriveControllerFixture()
         defer { fixture.remove() }

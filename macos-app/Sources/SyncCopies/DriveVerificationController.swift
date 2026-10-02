@@ -155,16 +155,24 @@ final class DriveVerificationController: ObservableObject {
     }
 
     func start() async {
-        guard let environment else { return }
+        guard let environment, !stopped else { return }
         let captured = generation
         do {
-            let loaded = try await environment.listAccounts()
-            let pending = try await environment.credentialCleanupStatus?() ?? false
-            guard captured == generation else { return }
-            accounts = loaded
-            cleanupPending = pending
-            if failure != .invalidSavedState { failure = nil }
-        } catch { failure = .accountUnavailable }
+            // Listing retries deferred credential removal, so shutdown must own and await it.
+            try await performMutation {
+                let loaded = try await environment.listAccounts()
+                try Task.checkCancellation()
+                let pending = try await environment.credentialCleanupStatus?() ?? false
+                try Task.checkCancellation()
+                guard captured == self.generation, !self.stopped else { return }
+                self.accounts = loaded
+                self.cleanupPending = pending
+                if self.failure != .invalidSavedState { self.failure = nil }
+            }
+        } catch {
+            guard captured == generation, !stopped, !Task.isCancelled else { return }
+            failure = .accountUnavailable
+        }
     }
 
     func connect() {

@@ -152,7 +152,7 @@ final class AppModel: ObservableObject {
     private var scanAgain = false
     private var generation = 0
     private var updatePreparationGeneration = 0
-    private var isTerminating = false
+    private(set) var isTerminating = false
     private var sourceScope: FolderAccess?
     private var monitoredPaths: Set<String> = []
     private var monitor: FileMonitor?

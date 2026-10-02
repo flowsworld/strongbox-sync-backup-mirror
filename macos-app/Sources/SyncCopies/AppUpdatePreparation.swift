@@ -24,6 +24,7 @@ final class AppUpdatePreparation {
     }
 
     func resume() {
+        guard !model.isTerminating else { return }
         generation += 1
         model.resumeAfterCancelledUpdate()
         drive.resume()
