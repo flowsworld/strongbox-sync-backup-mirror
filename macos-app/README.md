@@ -165,6 +165,19 @@ im Bericht.
 
 ## Noch offen vor Veröffentlichung
 
+Die Vorbereitung für Google Drive, Release-Bau und Updates ist dokumentiert:
+
+- [Native Google-Drive-Prüfung](../docs/research/native-google-drive-verification.md),
+  mit einem getesteten providerneutralen Prüfkern. OAuth, Drive-Adapter und
+  App-Integration sind noch nicht enthalten.
+- [Release-Vorbereitung](../docs/research/macos-release-preparation.md),
+  mit `zsh macos-app/release.zsh development VERSION BUILD` für einen isolierten
+  Universal-Kandidaten. Ein Ad-hoc-Build ist keine signierte Beta.
+- [Store- und Direkt-Updates](../docs/research/macos-update-distribution.md),
+  mit Sparkle-Recherche und den noch offenen signierten Integrationstests.
+- [Oberflächenvarianten für die offenen Aufgaben](https://pages.diesis.cloud/d/sm01ct3cwj0o).
+  Ihre Auswahl steht vor Änderungen an der echten Oberfläche.
+
 Die optionale Google-Drive-Prüfung folgt in einem Update. Diese Fassung bestätigt
 nur die lokale Kopie. Flos vollständiger Umstieg wartet auf die Google-Drive-Prüfung.
 

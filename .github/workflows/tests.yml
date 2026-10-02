@@ -18,14 +18,18 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Native model, runtime and copy tests
         run: swift test
-      - name: Signed app and localization resources
-        run: zsh build.zsh
+      - name: Universal release candidate and localization resources
+        run: |
+          zsh release.zsh development 0.1.0 1
+          cd build/releases/development-0.1.0-1
+          shasum -a 256 -c SHA256SUMS
+          plutil -lint Sync-Kopien.app/Contents/Resources/PrivacyInfo.xcprivacy
       - name: Packaged app without development resources
         run: |
           mv .build .build-resources-hidden
           app_pid=''
           trap 'if [ -n "$app_pid" ]; then kill "$app_pid" 2>/dev/null || true; fi; mv .build-resources-hidden .build' EXIT
-          build/Sync-Kopien.app/Contents/MacOS/SyncCopies --demo &
+          build/releases/development-0.1.0-1/Sync-Kopien.app/Contents/MacOS/SyncCopies --demo &
           app_pid=$!
           sleep 3
           kill -0 "$app_pid"
@@ -45,6 +49,7 @@ jobs:
         run: |
           # zsh -n treats every file after the first as a script argument.
           for script in *.zsh; do /bin/zsh -n "$script"; done
+          for script in macos-app/*.zsh; do /bin/zsh -n "$script"; done
           /bin/bash -n setup-google-drive.sh
       - name: Isolated sync and API tests
         run: python3 -m unittest discover -s tests -v
