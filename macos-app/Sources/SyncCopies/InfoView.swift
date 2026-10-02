@@ -29,10 +29,10 @@ struct InfoView: View {
                             updates.checkNow()
                         }.disabled((!updates.canCheckForUpdates && !updates.installationBlocked) || updates.isPreparingInstallation)
                         Toggle(L10n.text("Automatically check for updates"), isOn: Binding(
-                            get: { updates.automaticallyChecksForUpdates }, set: updates.setAutomaticChecks
+                            get: { updates.automaticallyChecksForUpdates }, set: { updates.setAutomaticChecks($0) }
                         )).toggleStyle(.checkbox).disabled(!updates.canCheckForUpdates)
                         Toggle(L10n.text("Automatically download and install updates"), isOn: Binding(
-                            get: { updates.automaticallyDownloadsUpdates }, set: updates.setAutomaticDownloads
+                            get: { updates.automaticallyDownloadsUpdates }, set: { updates.setAutomaticDownloads($0) }
                         )).toggleStyle(.checkbox).disabled(!updates.canCheckForUpdates || !updates.automaticallyChecksForUpdates)
                         Text(L10n.text("Installation waits until the current copy and check have finished.")).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
