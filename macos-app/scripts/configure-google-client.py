@@ -9,7 +9,7 @@ import stat
 
 
 def read_configuration(path: Path) -> dict[str, str]:
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         metadata = os.fstat(descriptor)
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 65_536:
@@ -42,10 +42,12 @@ def read_configuration(path: Path) -> dict[str, str]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("configuration", type=Path)
-    parser.add_argument("info_plist", type=Path)
+    parser.add_argument("info_plist", type=Path, nargs="?")
     arguments = parser.parse_args()
     try:
         values = read_configuration(arguments.configuration)
+        if arguments.info_plist is None:
+            return
         with arguments.info_plist.open("rb") as stream:
             info = plistlib.load(stream)
         if not isinstance(info, dict):

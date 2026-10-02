@@ -49,6 +49,25 @@ private final class NotificationGate {
 
 @MainActor
 struct NotificationTests {
+    @Test(arguments: [false, true]) func cancelledCloudAlertCannotRemainPending(duringAdd: Bool) async throws {
+        let recorder = NotificationRecorder()
+        let service = recorder.service()
+        let gate = NotificationGate()
+        let id = UUID()
+        if duringAdd { recorder.addHook = { await gate.wait() } }
+        else { recorder.authorizationHook = { await gate.wait() } }
+        let delivery = Task { try await service.sendDrive(id: id, title: "Fixture", body: "Cloud event", databaseID: UUID().uuidString) }
+        try await eventually { gate.entered }
+        service.cancelDrive(id: id)
+        gate.release()
+        try await delivery.value
+        if duringAdd {
+            #expect(recorder.requests.count == 1)
+            #expect(recorder.requests.first?.trigger is UNTimeIntervalNotificationTrigger)
+            #expect(recorder.removed.contains("drive:" + id.uuidString))
+        } else { #expect(recorder.requests.isEmpty) }
+    }
+
     private func eventually(_ condition: () -> Bool) async throws {
         for _ in 0..<500 {
             if condition() { return }

@@ -1,6 +1,9 @@
 import importlib.util
+import os
 from pathlib import Path
 import tempfile
+import subprocess
+import sys
 import unittest
 
 
@@ -11,6 +14,13 @@ spec.loader.exec_module(module)
 
 
 class NativeGoogleConfigurationTests(unittest.TestCase):
+    def test_rejects_fifo_without_waiting_for_a_writer(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "pipe.env"
+            os.mkfifo(path, 0o600)
+            result = subprocess.run([sys.executable, str(SCRIPT), str(path)], capture_output=True, timeout=2)
+            self.assertEqual(result.returncode, 2)
+
     def test_accepts_explicit_native_client_configuration(self):
         with tempfile.TemporaryDirectory() as root:
             path = Path(root) / "client.env"

@@ -29,6 +29,8 @@ struct Application {
 final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let model: AppModel
     private let updates: AppUpdates
+    private let drive: DriveVerificationController
+    private let updatePreparation: AppUpdatePreparation
     private var statusItem: NSStatusItem?
     private var window: NSWindow?
     private var observer: AnyCancellable?
@@ -37,11 +39,28 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     init(demo: Bool, setupPreview: Bool = false) {
         let model = AppModel(demo: demo, setupPreview: setupPreview)
         self.model = model
-        updates = AppUpdates(demo: demo, resumeAfterCancelledUpdate: {
-            model.resumeAfterCancelledUpdate()
-        }, prepareForUpdate: {
-            await model.prepareForUpdate()
-        })
+        let directory = model.driveSettingsDirectory
+        let environment: DriveVerificationEnvironment?
+        if !demo, let client = try? GoogleDriveNativeClient.from() {
+            let transport = GoogleDriveTransport.live()
+            let accounts = GoogleDriveAccounts(registryURL: directory.appendingPathComponent("accounts.json"),
+                                              client: client, credentials: .live(), transport: transport)
+            let signIn = GoogleDriveSignIn(client: client, transport: transport)
+            environment = .live(accounts: accounts, signIn: signIn, transport: transport,
+                                localInputs: { model.driveLocalInputs() },
+                                deliver: { try await model.deliverDriveEvent($0) },
+                                cancelNotification: { model.cancelDriveNotification($0) },
+                                history: { model.recordDriveEvent($0) })
+        } else { environment = nil }
+        let drive = DriveVerificationController(settingsURL: directory.appendingPathComponent("settings.json"),
+                                                environment: environment, demo: demo)
+        self.drive = drive
+        model.onLocalScanStarted = { [weak drive] in drive?.localCopiesChanged() }
+        model.onLocalScanComplete = { [weak drive] in drive?.requestCheck() }
+        let preparation = AppUpdatePreparation(model: model, drive: drive)
+        updatePreparation = preparation
+        updates = AppUpdates(demo: demo, resumeAfterCancelledUpdate: { preparation.resume() },
+                             prepareForUpdate: { await preparation.prepare() })
         super.init()
     }
 
@@ -66,6 +85,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         }
         model.onOpenSettings = { [weak self] in self?.showSettings() }
         updates.start()
+        Task { await drive.start(); drive.requestCheck() }
         if model.needsSetup || model.isDemo { showSettings() }
     }
 
@@ -77,11 +97,13 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         guard !terminationPending else { return .terminateLater }
         terminationPending = true
         Task {
-            // Inspect the updater after active copies finish. A download may
-            // prepare an installer while this wait is suspended.
+            // Both workers must settle before the final updater check and lock release.
+            async let providerReady = drive.quiesceAndPersist()
             await model.quiesceForTermination()
-            if updates.requiresDurableQuit, !model.persistForUpdateTermination() {
+            let cloudReady = await providerReady
+            if updates.requiresDurableQuit, (!cloudReady || !model.persistForUpdateTermination()) {
                 model.cancelTermination()
+                updatePreparation.resume()
                 terminationPending = false
                 sender.reply(toApplicationShouldTerminate: false)
                 return
@@ -141,7 +163,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
             window.title = L10n.format("%@ · Settings", L10n.appName)
             window.contentMinSize = NSSize(width: 740, height: 540)
             window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: SettingsView(model: model, updates: updates).environment(\.locale, L10n.locale))
+            window.contentView = NSHostingView(rootView: SettingsView(model: model, updates: updates, drive: drive).environment(\.locale, L10n.locale))
             window.center()
             self.window = window
         }

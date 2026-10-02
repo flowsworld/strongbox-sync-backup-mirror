@@ -238,3 +238,119 @@
 "Automatic updates follow your Mac App Store settings." = "Automatic updates follow your Mac App Store settings.";
 
 "The update could not be completed." = "The update could not be completed.";
+
+"Optional: confirm that Google Drive has received your local copy." = "Optional: confirm that Google Drive has received your local copy.";
+
+"The app reads file metadata only. It does not upload files, read cloud file contents or write to Google Drive." = "The app reads file metadata only. It does not upload files, read cloud file contents or write to Google Drive.";
+
+"Google Drive is disabled in the preview." = "Google Drive is disabled in the preview.";
+
+"Google Drive is not configured for this build." = "Google Drive is not configured for this build.";
+
+"Google Drive settings could not be saved or read." = "Google Drive settings could not be saved or read.";
+
+"Invalid Google Drive verification settings were reset." = "Invalid Google Drive verification settings were reset.";
+
+"The Google Drive account is unavailable." = "The Google Drive account is unavailable.";
+
+"The Google Drive folder could not be verified." = "The Google Drive folder could not be verified.";
+
+"Google Drive sign-in could not be completed." = "Google Drive sign-in could not be completed.";
+
+"Google accounts" = "Google accounts";
+
+"No Google account connected." = "No Google account connected.";
+
+"Disconnect" = "Disconnect";
+
+"Disconnect %@" = "Disconnect %@";
+
+"Complete Google sign-in in your browser." = "Complete Google sign-in in your browser.";
+
+"Connect Google account…" = "Connect Google account…";
+
+"Connect another Google account…" = "Connect another Google account…";
+
+"Disconnecting stops checks on this Mac. Manage or revoke Google's permission separately in your Google account." = "Disconnecting stops checks on this Mac. Manage or revoke Google's permission separately in your Google account.";
+
+"Manage Google permissions" = "Manage Google permissions";
+
+"Check uploads per database" = "Check uploads per database";
+
+"Select a database on the Databases page first." = "Select a database on the Databases page first.";
+
+"Check cloud now" = "Check cloud now";
+
+"Cloud notifications" = "Cloud notifications";
+
+"Cloud check errors" = "Cloud check errors";
+
+"Overdue uploads" = "Overdue uploads";
+
+"Resolved cloud check errors" = "Resolved cloud check errors";
+
+"Confirmed uploads" = "Confirmed uploads";
+
+"Cloud notifications are independent of local copy notifications. macOS permission is shared." = "Cloud notifications are independent of local copy notifications. macOS permission is shared.";
+
+"Turn off cloud checking" = "Turn off cloud checking";
+
+"Cloud checking is off." = "Cloud checking is off.";
+
+"Google account" = "Google account";
+
+"Choose an account" = "Choose an account";
+
+"Google Drive folder link or ID" = "Google Drive folder link or ID";
+
+"Verify and use folder" = "Verify and use folder";
+
+"The check looks for %@ in this folder. Choose the folder containing the synced copy." = "The check looks for %@ in this folder. Choose the folder containing the synced copy.";
+
+"Upload confirmed" = "Upload confirmed";
+
+"Upload pending" = "Upload pending";
+
+"Upload overdue" = "Upload overdue";
+
+"Cloud check failed" = "Cloud check failed";
+
+"Cloud last checked: %@" = "Cloud last checked: %@";
+
+"Previously confirmed: %@. This does not confirm the current upload." = "Previously confirmed: %@. This does not confirm the current upload.";
+
+"Cloud not checked yet" = "Cloud not checked yet";
+
+"Google Drive is unreachable. The local copy is unaffected." = "Google Drive is unreachable. The local copy is unaffected.";
+
+"Google Drive access was denied. Check the account and folder permissions." = "Google Drive access was denied. Check the account and folder permissions.";
+
+"Reconnect the Google Drive account to continue checking." = "Reconnect the Google Drive account to continue checking.";
+
+"Choose a Google Drive account and folder for this database." = "Choose a Google Drive account and folder for this database.";
+
+"The local copy is unavailable for cloud verification." = "The local copy is unavailable for cloud verification.";
+
+"Google Drive returned ambiguous or invalid file metadata." = "Google Drive returned ambiguous or invalid file metadata.";
+
+"The local copy changed during verification. It will be checked again." = "The local copy changed during verification. It will be checked again.";
+
+"The cloud file has no supported checksum. Its upload cannot be confirmed." = "The cloud file has no supported checksum. Its upload cannot be confirmed.";
+
+"The saved cloud verification could not be restored." = "The saved cloud verification could not be restored.";
+
+"Google Drive verification failed." = "Google Drive verification failed.";
+
+"Google Drive upload is overdue." = "Google Drive upload is overdue.";
+
+"Google Drive verification recovered and the upload is confirmed." = "Google Drive verification recovered and the upload is confirmed.";
+
+"Google Drive verification recovered. The upload is still pending." = "Google Drive verification recovered. The upload is still pending.";
+
+"Google Drive upload confirmed." = "Google Drive upload confirmed.";
+
+"%@: Google Drive" = "%@: Google Drive";
+
+"Google grants read access to metadata across all Drive files. Choosing a folder limits this app's queries, not Google's permission." = "Google grants read access to metadata across all Drive files. Choosing a folder limits this app's queries, not Google's permission.";
+
+"Wait for the current update preparation to finish." = "Wait for the current update preparation to finish.";

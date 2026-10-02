@@ -134,6 +134,78 @@ private final class DriveControllerFixture {
 
 @MainActor
 struct DriveVerificationControllerTests {
+    @Test func updateQuiesceWaitsForFolderOperationsAndRejectsFurtherMutations() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        let controller = fixture.controller()
+        await controller.start()
+        await fixture.server.blockFolder()
+        let binding = Task { try await controller.selectFolder(databaseID: fixture.id, accountID: (await fixture.server.accounts())[0].id, input: "root") }
+        try await fixture.awaitFolder()
+        var prepared = false
+        let preparation = Task { let result = await controller.quiesceAndPersist(); prepared = true; return result }
+        for _ in 0..<100 { await Task.yield() }
+        #expect(!prepared)
+        #expect(throws: DriveControllerFailure.busy) { try controller.disable(databaseID: fixture.id) }
+        #expect(throws: DriveControllerFailure.busy) { try controller.setPreferences(DriveNotificationPreferences()) }
+        await #expect(throws: DriveControllerFailure.busy) { try await controller.disconnect(accountID: "google-drive:synthetic-account") }
+        await fixture.server.releaseFolder()
+        #expect(await preparation.value)
+        await #expect(throws: (any Error).self) { try await binding.value }
+        #expect(controller.bindings.isEmpty)
+        controller.resume()
+        try await fixture.bind(controller)
+        #expect(controller.bindings[fixture.id] != nil)
+    }
+
+    @Test func firstMismatchDoesNotCountTimeSpentWaitingForItsResponse() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        let controller = fixture.controller()
+        await controller.start()
+        await fixture.server.setBlocked(true)
+        try await controller.selectFolder(databaseID: fixture.id, accountID: (await fixture.server.accounts())[0].id, input: "root")
+        try await fixture.awaitQuery()
+        fixture.now += 800
+        await fixture.server.release()
+        try await fixture.settle(controller)
+        #expect(controller.results[fixture.id]?.pendingSeconds == 0)
+    }
+
+    @Test func changedContentCanRecoverImmediatelyWithoutConfirmationAlerts() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        await fixture.server.set(remote: nil, problem: .accessDenied)
+        let controller = fixture.controller()
+        try await fixture.bind(controller)
+        fixture.fingerprint = try UploadLocalFingerprint(size: 14, sha256: String(repeating: "c", count: 64), md5: String(repeating: "d", count: 32))
+        await fixture.server.set(remote: try fixture.matching())
+        controller.localCopiesChanged()
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(fixture.delivered.map(\.kind) == [.error, .recovery])
+        #expect(fixture.delivered.last?.confirmed == true)
+    }
+
+    @Test func unchangedRecoveryDoesNotRepeatConfirmationWhenRecoveryAlertsAreOff() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        let controller = fixture.controller()
+        var preferences = DriveNotificationPreferences()
+        preferences.recoveries = false
+        preferences.confirmed = true
+        try controller.setPreferences(preferences)
+        await fixture.server.set(remote: try fixture.matching())
+        try await fixture.bind(controller)
+        await fixture.server.set(remote: nil, problem: .accessDenied)
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        await fixture.server.set(remote: try fixture.matching())
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(fixture.delivered.map(\.kind) == [.confirmed, .error])
+    }
+
     @Test func unavailableAndDemoHaveNoExternalOrPersistenceEffects() async throws {
         let fixture = try DriveControllerFixture()
         defer { fixture.remove() }

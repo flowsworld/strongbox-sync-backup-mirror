@@ -7,17 +7,19 @@ channel=development
 feed_url=''
 public_key=''
 store_url=''
+google_configuration=''
 typeset -a architecture_flags=()
 while (( $# )); do
     case "$1" in
         --universal) architecture_flags=(--arch arm64 --arch x86_64); shift ;;
-        --distribution|--feed-url|--public-key|--store-url)
+        --distribution|--feed-url|--public-key|--store-url|--google-client-config)
             (( $# >= 2 )) || { print -u2 "Missing value after $1"; exit 2; }
             case "$1" in
                 --distribution) channel=$2 ;;
                 --feed-url) feed_url=$2 ;;
                 --public-key) public_key=$2 ;;
                 --store-url) store_url=$2 ;;
+                --google-client-config) google_configuration=$2 ;;
             esac
             shift 2 ;;
         --output)
@@ -64,6 +66,10 @@ except (ValueError, UnicodeError):
     sys.exit('Invalid update feed, public key or Store URL configuration.')
 PYCONFIG
 export DIESIS_DISTRIBUTION="$channel"
+if [[ -n "$google_configuration" ]]; then
+    [[ "$google_configuration" == /* ]] || { print -u2 'Use an absolute native Google configuration path.'; exit 2; }
+    python3 "$app_dir/scripts/configure-google-client.py" "$google_configuration"
+fi
 scratch_path="$app_dir/.build/$channel"
 # Use the installed Xcode SDK without changing the global developer selection.
 if [[ -z "${DEVELOPER_DIR:-}" && -d /Applications/Xcode.app/Contents/Developer ]]; then
@@ -137,6 +143,9 @@ xcrun swiftc "$app_dir/Sources/SyncCopies/AppIcon.swift" "$app_dir/scripts/Gener
 "$staging/icon-generator" "$staging/AppIcon.iconset"
 iconutil -c icns "$staging/AppIcon.iconset" -o "$app_bundle/Contents/Resources/AppIcon.icns"
 plist="$app_bundle/Contents/Info.plist"
+if [[ -n "$google_configuration" ]]; then
+    python3 "$app_dir/scripts/configure-google-client.py" "$google_configuration" "$plist"
+fi
 plutil -insert CFBundleIconFile -string AppIcon "$plist"
 plutil -insert DIESISDistributionChannel -string "$channel" "$plist"
 entitlements="$app_dir/entitlements.plist"

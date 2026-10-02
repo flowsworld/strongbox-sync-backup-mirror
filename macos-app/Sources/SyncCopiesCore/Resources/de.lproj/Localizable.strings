@@ -238,3 +238,119 @@
 "Automatic updates follow your Mac App Store settings." = "Automatische Updates richten sich nach deinen Mac-App-Store-Einstellungen.";
 
 "The update could not be completed." = "Das Update konnte nicht abgeschlossen werden.";
+
+"Optional: confirm that Google Drive has received your local copy." = "Optional: Bestätigen, dass Google Drive deine lokale Kopie erhalten hat.";
+
+"The app reads file metadata only. It does not upload files, read cloud file contents or write to Google Drive." = "Die App liest nur Dateimetadaten. Sie lädt keine Dateien hoch, liest keine Cloud-Dateiinhalte und schreibt nicht zu Google Drive.";
+
+"Google Drive is disabled in the preview." = "Google Drive ist in der Vorschau deaktiviert.";
+
+"Google Drive is not configured for this build." = "Google Drive ist für diese Fassung noch nicht eingerichtet.";
+
+"Google Drive settings could not be saved or read." = "Die Google-Drive-Einstellungen konnten nicht gespeichert oder gelesen werden.";
+
+"Invalid Google Drive verification settings were reset." = "Ungültige Einstellungen für die Google-Drive-Prüfung wurden zurückgesetzt.";
+
+"The Google Drive account is unavailable." = "Das Google-Drive-Konto ist nicht verfügbar.";
+
+"The Google Drive folder could not be verified." = "Der Google-Drive-Ordner konnte nicht geprüft werden.";
+
+"Google Drive sign-in could not be completed." = "Die Google-Anmeldung konnte nicht abgeschlossen werden.";
+
+"Google accounts" = "Google-Konten";
+
+"No Google account connected." = "Kein Google-Konto verbunden.";
+
+"Disconnect" = "Trennen";
+
+"Disconnect %@" = "%@ trennen";
+
+"Complete Google sign-in in your browser." = "Schließe die Google-Anmeldung im Browser ab.";
+
+"Connect Google account…" = "Google-Konto verbinden…";
+
+"Connect another Google account…" = "Weiteres Google-Konto verbinden…";
+
+"Disconnecting stops checks on this Mac. Manage or revoke Google's permission separately in your Google account." = "Das Trennen beendet die Prüfungen auf diesem Mac. Googles Berechtigung kannst du getrennt davon in deinem Google-Konto verwalten oder widerrufen.";
+
+"Manage Google permissions" = "Google-Berechtigungen verwalten";
+
+"Check uploads per database" = "Uploads je Datenbank prüfen";
+
+"Select a database on the Databases page first." = "Wähle zuerst eine Datenbank auf der Seite Datenbanken aus.";
+
+"Check cloud now" = "Cloud jetzt prüfen";
+
+"Cloud notifications" = "Cloud-Mitteilungen";
+
+"Cloud check errors" = "Fehler bei Cloud-Prüfungen";
+
+"Overdue uploads" = "Überfällige Uploads";
+
+"Resolved cloud check errors" = "Behobene Cloud-Prüffehler";
+
+"Confirmed uploads" = "Bestätigte Uploads";
+
+"Cloud notifications are independent of local copy notifications. macOS permission is shared." = "Cloud-Mitteilungen sind unabhängig von Mitteilungen für lokale Kopien. Die macOS-Berechtigung gilt für beide.";
+
+"Turn off cloud checking" = "Cloud-Prüfung ausschalten";
+
+"Cloud checking is off." = "Cloud-Prüfung ist ausgeschaltet.";
+
+"Google account" = "Google-Konto";
+
+"Choose an account" = "Konto auswählen";
+
+"Google Drive folder link or ID" = "Google-Drive-Ordnerlink oder ID";
+
+"Verify and use folder" = "Ordner prüfen und verwenden";
+
+"The check looks for %@ in this folder. Choose the folder containing the synced copy." = "Die Prüfung sucht in diesem Ordner nach %@. Wähle den Ordner mit der synchronisierten Kopie.";
+
+"Upload confirmed" = "Upload bestätigt";
+
+"Upload pending" = "Upload ausstehend";
+
+"Upload overdue" = "Upload überfällig";
+
+"Cloud check failed" = "Cloud-Prüfung fehlgeschlagen";
+
+"Cloud last checked: %@" = "Letzte Cloud-Prüfung: %@";
+
+"Previously confirmed: %@. This does not confirm the current upload." = "Früher bestätigt: %@. Dies bestätigt nicht den aktuellen Upload.";
+
+"Cloud not checked yet" = "Cloud noch nicht geprüft";
+
+"Google Drive is unreachable. The local copy is unaffected." = "Google Drive ist nicht erreichbar. Die lokale Kopie ist davon nicht betroffen.";
+
+"Google Drive access was denied. Check the account and folder permissions." = "Google Drive hat den Zugriff verweigert. Prüfe das Konto und die Ordnerberechtigungen.";
+
+"Reconnect the Google Drive account to continue checking." = "Verbinde das Google-Drive-Konto erneut, um weiter zu prüfen.";
+
+"Choose a Google Drive account and folder for this database." = "Wähle für diese Datenbank ein Google-Drive-Konto und einen Ordner.";
+
+"The local copy is unavailable for cloud verification." = "Die lokale Kopie ist für die Cloud-Prüfung nicht verfügbar.";
+
+"Google Drive returned ambiguous or invalid file metadata." = "Google Drive hat mehrdeutige oder ungültige Dateimetadaten geliefert.";
+
+"The local copy changed during verification. It will be checked again." = "Die lokale Kopie hat sich während der Prüfung geändert. Sie wird erneut geprüft.";
+
+"The cloud file has no supported checksum. Its upload cannot be confirmed." = "Die Cloud-Datei hat keine unterstützte Prüfsumme. Ihr Upload kann nicht bestätigt werden.";
+
+"The saved cloud verification could not be restored." = "Die gespeicherte Cloud-Prüfung konnte nicht wiederhergestellt werden.";
+
+"Google Drive verification failed." = "Google-Drive-Prüfung fehlgeschlagen.";
+
+"Google Drive upload is overdue." = "Google-Drive-Upload ist überfällig.";
+
+"Google Drive verification recovered and the upload is confirmed." = "Die Google-Drive-Prüfung funktioniert wieder und der Upload ist bestätigt.";
+
+"Google Drive verification recovered. The upload is still pending." = "Die Google-Drive-Prüfung funktioniert wieder. Der Upload steht noch aus.";
+
+"Google Drive upload confirmed." = "Google-Drive-Upload bestätigt.";
+
+"%@: Google Drive" = "%@: Google Drive";
+
+"Google grants read access to metadata across all Drive files. Choosing a folder limits this app's queries, not Google's permission." = "Google erlaubt das Lesen von Metadaten aller Drive-Dateien. Die Ordnerwahl begrenzt die Abfragen dieser App, nicht Googles Berechtigung.";
+
+"Wait for the current update preparation to finish." = "Warte, bis die laufende Update-Vorbereitung abgeschlossen ist.";

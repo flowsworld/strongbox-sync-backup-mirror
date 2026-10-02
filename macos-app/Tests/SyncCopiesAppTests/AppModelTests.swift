@@ -266,6 +266,25 @@ struct AppModelTests {
         await model.shutdown()
     }
 
+    @Test func failedSelectionSaveInvalidatesCloudInputBeforeRescanning() async throws {
+        let fixture = try ModelFixture()
+        let model = AppModel(environment: fixture.environment())
+        try await settled(model)
+        #expect(!model.driveLocalInputs().isEmpty)
+        var invalidations = 0
+        model.onLocalScanStarted = { invalidations += 1 }
+        let settingsDirectory = fixture.preferencesURL.deletingLastPathComponent()
+        try FileManager.default.removeItem(at: settingsDirectory)
+        try Data("blocked settings directory".utf8).write(to: settingsDirectory)
+        model.useCommonTarget(for: fixture.second)
+        #expect(invalidations == 1)
+        #expect(model.states.isEmpty)
+        let input = try #require(model.driveLocalInputs().first { $0.id == fixture.second.id })
+        await #expect(throws: UploadVerificationFailure.localFileUnavailable) { try await input.makeSnapshot() }
+        #expect(model.problem != nil)
+        await model.shutdown()
+    }
+
     @Test func updatePreparationPreservesSettingsAndCopies() async throws {
         let fixture = try ModelFixture()
         let model = AppModel(environment: fixture.environment())
