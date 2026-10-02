@@ -214,7 +214,10 @@ final class AppModel: ObservableObject {
     var sourceGranted: Bool { isDemo || preferences.source != nil }
     var commonTargetName: String { isDemo ? "/Users/Beispiel/Google Drive/Lesekopien" : label(for: preferences.defaultTarget) }
     var sourceFolderPath: String { isDemo ? "/Users/Beispiel/Library/Group Containers/group.strongbox.mac.mcguill" : label(for: preferences.source) }
-    var canChooseSource: Bool { !isDemo && !isChecking && !isStopping && !loadFailed && [.notGranted, .unavailable, .unconfirmed].contains(sourceReadStatus) }
+    var canChooseSource: Bool {
+        !isDemo && !isChecking && !isStopping && !loadFailed &&
+        (sourceReadStatus != .available || preferences.globalFailure != nil)
+    }
     func targetFolderPath(for database: Database) -> String {
         if isDemo { return states[database.id]?.targetName ?? commonTargetName }
         return label(for: preference(for: database).target ?? preferences.defaultTarget)

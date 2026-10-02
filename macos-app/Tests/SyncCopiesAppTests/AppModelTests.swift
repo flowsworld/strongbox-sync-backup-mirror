@@ -349,7 +349,7 @@ struct AppModelTests {
         try await settled(model)
         #expect(model.problem == MirrorError.invalidMetadata.localizedDescription)
         #expect(model.sourceReadStatus == .available)
-        #expect(!model.canChooseSource)
+        #expect(model.canChooseSource)
         #expect(model.sourceFolderPath == fixture.source.path)
         await model.shutdown()
     }
