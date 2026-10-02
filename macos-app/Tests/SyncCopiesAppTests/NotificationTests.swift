@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import SyncCopiesCore
 import UserNotifications
 @testable import SyncCopies
 
@@ -123,7 +124,7 @@ struct NotificationTests {
         restarted.refresh()
         try await eventually { !restarted.isChecking }
         #expect(recorder.requests.count == (settings.notifications.recoveries ? 1 : 0))
-        #expect(restarted.preferences.history.contains { $0.message == "Fehler behoben" })
+        #expect(restarted.preferences.history.contains { $0.message.key == "Error resolved" })
         recorder.requests.removeAll()
         try FileManager.default.moveItem(at: fixture.common, to: offline)
         restarted.refresh()
@@ -158,7 +159,7 @@ struct NotificationTests {
         try await eventually { !restarted.isChecking }
         #expect(recorder.requests.count == 2)
         #expect(recorder.requests.last?.content.userInfo["kind"] as? String == "recoveries")
-        #expect(restarted.preferences.history.contains { $0.message == "Lesezugriff funktioniert wieder" })
+        #expect(restarted.preferences.history.contains { $0.message.key == "Read access is working again" })
         try FileManager.default.moveItem(at: fixture.common, to: fixture.root.appendingPathComponent("offline-target"))
         restarted.refresh()
         try await eventually { !restarted.isChecking }
@@ -184,11 +185,11 @@ struct NotificationTests {
         let model = AppModel(environment: fixture.environment(notifications: recorder.service()))
         try await eventually { !model.isChecking }
         #expect(recorder.requests.isEmpty)
-        #expect(model.preferences.history.filter { $0.message == "Neue Kopie erstellt" }.count == 2)
+        #expect(model.preferences.history.filter { $0.message.key == "New copy created" }.count == 2)
         #expect(recorder.authorizationRequests == 0)
         recorder.authorization = .authorized
         await model.updateNotificationStatus()
-        #expect(model.notificationStatus == "Erlaubt")
+        #expect(model.notificationStatus == L10n.text("Allowed"))
         model.refresh()
         try await eventually { !model.isChecking }
         #expect(recorder.requests.isEmpty)
@@ -198,7 +199,7 @@ struct NotificationTests {
         model.refresh()
         try await eventually { !model.isChecking }
         #expect(recorder.requests.isEmpty)
-        #expect(model.notificationStatus.contains("nicht erlaubt"))
+        #expect(model.notificationStatus == FolderPermissionError.notificationsDenied.localizedDescription)
         recorder.authorization = .provisional
         await model.updateNotificationStatus()
         model.refresh()
@@ -289,7 +290,7 @@ struct NotificationTests {
         #expect(recorder.requests.count == 1)
         recorder.authorization = .authorized
         await model.updateNotificationStatus()
-        #expect(model.notificationStatus == "Erlaubt")
+        #expect(model.notificationStatus == L10n.text("Allowed"))
         #expect(model.problem == nil)
         await model.shutdown()
     }

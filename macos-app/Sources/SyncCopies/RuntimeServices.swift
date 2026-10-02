@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import Foundation
+import SyncCopiesCore
 
 /// Owns nonisolated resources so cleanup does not depend on an actor-isolated deinitializer.
 private final class SchedulerResources: @unchecked Sendable {
@@ -62,14 +63,16 @@ final class AppScheduler {
     }
 }
 
-enum InstanceLockError: LocalizedError, Equatable {
+enum InstanceLockError: LocalizedError, LocalizedMessageError, Equatable {
     case alreadyRunning
     case unsafeLockFile
 
-    var errorDescription: String? {
+    var errorDescription: String? { message.rendered() }
+
+    var message: LocalizedMessage {
         switch self {
-        case .alreadyRunning: "Eine weitere Instanz der App läuft bereits. Bitte diese schließen."
-        case .unsafeLockFile: "Die Sperrdatei der App ist nicht sicher zugänglich."
+        case .alreadyRunning: LocalizedMessage(key: "Another instance of the app is already running. Please close it.")
+        case .unsafeLockFile: LocalizedMessage(key: "The app lock file cannot be accessed safely.")
         }
     }
 }

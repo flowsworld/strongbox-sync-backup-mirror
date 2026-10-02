@@ -6,8 +6,12 @@ Mitteilungen, Google Drive und Verlauf. Sie benötigt macOS 13 oder neuer.
 
 ## Verbindliche Produktvorgaben
 
-Die App soll auf Deutsch und Englisch verfügbar sein. Die aktuelle
-Entwicklungsoberfläche ist deutsch; die vollständige Lokalisierung steht noch aus.
+Die App ist auf Deutsch und Englisch verfügbar. Sie folgt der macOS-App-Sprache
+und fällt bei nicht unterstützten Sprachen auf Englisch zurück. Es gibt keinen
+eigenen Sprachschalter. Datumsangaben, Dateigrößen und Anzahlen berücksichtigen
+die gewählte Sprache und die regionalen Einstellungen. Neue Verlaufseinträge
+speichern sprachneutrale Ereignisse. Bekannte alte Meldungen werden übersetzt;
+sonstige alte Texte bleiben mit einem Hinweis auf ihre Originalsprache erhalten.
 Als Namenskandidaten sind "Sync Backupdatei-Mirror (Strongbox)" und
 "Strongbox Sync Backupdatei-Mirror" vorgesehen. Die Verwendung von "Strongbox"
 ist vor dem endgültigen Namen zu klären. "Sync-Kopien" ist nur der bisherige
@@ -91,6 +95,25 @@ Die GitHub-CI führt diese Swift-Tests zusätzlich zu den Tests des Shell-Helfer
 
 Der Nachweis für den normalen App-Lebenszyklus und seine Grenzen steht in
 [docs/testing/issue-5-lifecycle.md](../docs/testing/issue-5-lifecycle.md).
+
+## Lokalisierung prüfen
+
+Die Sprachressourcen liegen in
+`Sources/SyncCopiesCore/Resources/en.lproj` und `de.lproj`. Der Entwicklungsname
+steht nur im Schlüssel `appName`; das Build-Skript erzeugt daraus auch die
+lokalisierten Bundle-Anzeigenamen. Die Bundle-Kennung und die gespeicherten
+Ordnerfreigaben bleiben beim Ändern des Anzeigenamens erhalten.
+
+Für eine Vorschau mit ausschließlich prozesslokaler Sprachvorgabe:
+
+```sh
+open -n macos-app/build/Sync-Kopien.app --args --demo -AppleLanguages '(en)' -AppleLocale en_US
+open -n macos-app/build/Sync-Kopien.app --args --demo -AppleLanguages '(de)' -AppleLocale de_AT
+```
+
+Ohne diese Testargumente folgt die App den Systemeinstellungen.
+Prüfergebnisse und Grenzen stehen in
+[docs/testing/issue-7-localization.md](../docs/testing/issue-7-localization.md).
 
 ## Isolierter Kopiertest
 

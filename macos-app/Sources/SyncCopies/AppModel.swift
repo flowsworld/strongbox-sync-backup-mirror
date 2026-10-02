@@ -8,11 +8,11 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     var id: Self { self }
     var title: String {
         switch self {
-        case .general: "Allgemein"
-        case .databases: "Datenbanken"
-        case .notifications: "Mitteilungen"
-        case .googleDrive: "Google Drive"
-        case .history: "Verlauf"
+        case .general: L10n.text("General")
+        case .databases: L10n.text("Databases")
+        case .notifications: L10n.text("Notifications")
+        case .googleDrive: L10n.text("Google Drive")
+        case .history: L10n.text("History")
         }
     }
     var symbol: String {
@@ -30,7 +30,7 @@ struct DatabasePreferences: Codable, Sendable {
     var enabled = false
     var target: Data?
     var lastCopied: Date?
-    var lastFailure: String?
+    var lastFailure: LocalizedMessage?
 }
 
 struct NotificationPreferences: Codable, Sendable {
@@ -44,8 +44,9 @@ struct HistoryEntry: Codable, Identifiable, Sendable {
     let date: Date
     let databaseID: UUID?
     let name: String
-    let message: String
+    let message: LocalizedMessage
     let isError: Bool
+    var displayName: String { databaseID == nil && name == "App" ? L10n.appName : name }
 }
 
 struct Preferences: Codable, Sendable {
@@ -54,7 +55,7 @@ struct Preferences: Codable, Sendable {
     var databases: [String: DatabasePreferences] = [:]
     var notifications = NotificationPreferences()
     var history: [HistoryEntry] = []
-    var globalFailure: String?
+    var globalFailure: LocalizedMessage?
 }
 
 private struct PendingNotification {
@@ -68,7 +69,7 @@ struct DatabaseState: Sendable {
     var checked: Date?
     var backup: BackupInfo?
     var targetName: String?
-    var error: String?
+    var error: LocalizedMessage?
     var copied = false
 }
 
@@ -77,20 +78,20 @@ enum SourceReadStatus: Sendable, Equatable {
 
     var title: String {
         switch self {
-        case .notGranted: "Lesezugriff erforderlich"
-        case .checking: "Lesezugriff wird geprüft…"
-        case .available: "Lesezugriff erlaubt"
-        case .unavailable: "Lesezugriff fehlgeschlagen"
-        case .unconfirmed: "Lesezugriff noch nicht bestätigt"
+        case .notGranted: L10n.text("Read access required")
+        case .checking: L10n.text("Checking read access…")
+        case .available: L10n.text("Read access allowed")
+        case .unavailable: L10n.text("Read access failed")
+        case .unconfirmed: L10n.text("Read access not confirmed yet")
         }
     }
 }
 
-private struct SourceScanFailure: LocalizedError, Sendable {
-    let message: String
+private struct SourceScanFailure: LocalizedError, LocalizedMessageError, Sendable {
+    let message: LocalizedMessage
     let sourcePath: String?
     let readStatus: SourceReadStatus
-    var errorDescription: String? { message }
+    var errorDescription: String? { message.rendered() }
 }
 
 private struct ScanResult: Sendable {
@@ -101,12 +102,14 @@ private struct ScanResult: Sendable {
     let states: [UUID: DatabaseState]
 }
 
-enum ConfigurationError: LocalizedError {
+enum ConfigurationError: LocalizedError, LocalizedMessageError {
     case missingTarget, collidingDestination
-    var errorDescription: String? {
+    var errorDescription: String? { message.rendered() }
+
+    var message: LocalizedMessage {
         switch self {
-        case .missingTarget: "Wähle einen gemeinsamen oder eigenen Zielordner."
-        case .collidingDestination: "Mehrere Datenbanken würden dieselbe Zieldatei ersetzen. Wähle unterschiedliche Zielordner."
+        case .missingTarget: LocalizedMessage(key: "Choose a shared or individual destination folder.")
+        case .collidingDestination: LocalizedMessage(key: "Multiple databases would replace the same destination file. Choose different destination folders.")
         }
     }
 }
@@ -121,7 +124,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var sourceReadStatus: SourceReadStatus = .notGranted
     @Published private var folderPaths: [Data: String] = [:]
     @Published private(set) var problem: String?
-    @Published private(set) var notificationStatus = "Nicht angefragt"
+    @Published private(set) var notificationStatus = L10n.text("Not requested")
     @Published private(set) var loginEnabled = false
     @Published private(set) var loginNeedsApproval = false
     @Published var page: SettingsPage = .databases
@@ -154,17 +157,17 @@ final class AppModel: ObservableObject {
         preferencesURL = environment?.preferencesURL ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/SyncCopies/preferences.json")
         if demo {
-            let privateDB = Database(id: UUID(), filename: "Privat.kdbx", displayName: "Privat")
-            let workDB = Database(id: UUID(), filename: "Arbeit.kdbx", displayName: "Arbeit")
-            let clubDB = Database(id: UUID(), filename: "Verein.kdbx", displayName: "Verein")
+            let privateDB = Database(id: UUID(), filename: "Personal.kdbx", displayName: L10n.text("Personal"))
+            let workDB = Database(id: UUID(), filename: "Work.kdbx", displayName: L10n.text("Work"))
+            let clubDB = Database(id: UUID(), filename: "Club.kdbx", displayName: L10n.text("Club"))
             databases = [privateDB, workDB, clubDB]
             preferences.databases[privateDB.id.uuidString] = DatabasePreferences(enabled: true, lastCopied: Date().addingTimeInterval(-240))
             preferences.databases[workDB.id.uuidString] = DatabasePreferences(enabled: true, target: Data(), lastCopied: Date().addingTimeInterval(-7200))
             states[privateDB.id] = DatabaseState(checked: Date(), targetName: "/Users/Beispiel/Google Drive/Lesekopien")
-            states[workDB.id] = DatabaseState(checked: Date(), targetName: "/Volumes/NAS/Lesekopien", error: "Der Zielordner ist nicht erreichbar. Verbinde das NAS.")
-            preferences.history = [HistoryEntry(date: Date(), databaseID: workDB.id, name: "Arbeit", message: "Ziel nicht erreichbar", isError: true), HistoryEntry(date: Date().addingTimeInterval(-240), databaseID: privateDB.id, name: "Privat", message: "Neue Kopie erstellt", isError: false)]
+            states[workDB.id] = DatabaseState(checked: Date(), targetName: "/Volumes/NAS/Lesekopien", error: LocalizedMessage(key: "The destination folder is unreachable. Connect the NAS."))
+            preferences.history = [HistoryEntry(date: Date(), databaseID: workDB.id, name: L10n.text("Work"), message: LocalizedMessage(key: "Destination unreachable"), isError: true), HistoryEntry(date: Date().addingTimeInterval(-240), databaseID: privateDB.id, name: L10n.text("Personal"), message: LocalizedMessage(key: "New copy created"), isError: false)]
             sourceReadStatus = .available
-            notificationStatus = "Vorschau mit Beispieldaten"
+            notificationStatus = L10n.text("Preview with sample data")
             return
         }
         do {
@@ -173,7 +176,7 @@ final class AppModel: ObservableObject {
         } catch {
             startupConflict = (error as? InstanceLockError) == .alreadyRunning
             loadFailed = true
-            problem = error.localizedDescription
+            problem = LocalizedMessage.from(error).rendered()
             return
         }
         do {
@@ -183,7 +186,7 @@ final class AppModel: ObservableObject {
         } catch {
             loadFailed = true
             persistenceFailed = true
-            problem = "Die gespeicherten Einstellungen konnten nicht gelesen werden. \(error.localizedDescription)"
+            problem = L10n.format("Saved settings could not be read. %@", LocalizedMessage.from(error).rendered())
         }
         notifications?.discardStaleRequests()
         monitor = FileMonitor { [weak self] in
@@ -221,8 +224,8 @@ final class AppModel: ObservableObject {
         preferences.databases[database.id.uuidString] ?? DatabasePreferences()
     }
     func label(for bookmark: Data?) -> String {
-        guard let bookmark else { return "Kein Ordner ausgewählt" }
-        return folderPaths[bookmark] ?? "Ordnerpfad nicht verfügbar"
+        guard let bookmark else { return L10n.text("No folder selected") }
+        return folderPaths[bookmark] ?? L10n.text("Folder path unavailable")
     }
 
     private func rememberBookmarkPath(_ bookmark: Data, mounts: [FolderPathDisplay.Mount]) {
@@ -252,8 +255,8 @@ final class AppModel: ObservableObject {
             // passwd provides the actual home rather than the app's sandbox home.
             let userHome = getpwuid(getuid()).map { URL(fileURLWithPath: String(cString: $0.pointee.pw_dir)) } ?? home
             guard let bookmark = try FolderPicker.choose(
-                title: "Strongbox-Zugriff erlauben",
-                message: "Erlaube den Lesezugriff auf Strongboxs lokale Backups und Datenbanknamen.",
+                title: L10n.text("Allow Strongbox access"),
+                message: L10n.text("Allow read access to Strongbox's local backups and database names."),
                 initialURL: userHome.appendingPathComponent("Library/Group Containers/group.strongbox.mac.mcguill"),
                 readOnly: true
             ) else { return }
@@ -265,14 +268,14 @@ final class AppModel: ObservableObject {
             monitoredPaths = []
             monitor?.stop()
             if save() { refresh() }
-        } catch { problem = error.localizedDescription }
+        } catch { problem = LocalizedMessage.from(error).rendered() }
     }
 
     func chooseTarget(for database: Database? = nil) {
         guard !isDemo, !isChecking, !isStopping, !loadFailed else { return }
         do {
             guard let bookmark = try FolderPicker.choose(
-                title: "Zielordner wählen", message: "Wähle einen bestehenden Ordner für die Lesekopien.", readOnly: false
+                title: L10n.text("Choose destination folder"), message: L10n.text("Choose an existing folder for the read-only copies."), readOnly: false
             ) else { return }
             if let database {
                 var item = preference(for: database)
@@ -282,7 +285,7 @@ final class AppModel: ObservableObject {
             rememberTargetPaths()
             generation += 1
             if save() { refresh() }
-        } catch { problem = error.localizedDescription }
+        } catch { problem = LocalizedMessage.from(error).rendered() }
     }
 
     func useCommonTarget(for database: Database) {
@@ -319,7 +322,7 @@ final class AppModel: ObservableObject {
         if value, !isDemo, let notifications {
             Task {
                 do { try await notifications.requestAuthorization() }
-                catch { problem = error.localizedDescription }
+                catch { problem = LocalizedMessage.from(error).rendered() }
                 await updateNotificationStatus()
             }
         }
@@ -329,7 +332,7 @@ final class AppModel: ObservableObject {
         guard !isDemo, !isStopping, let notifications else { return }
         Task {
             do { try await notifications.requestAuthorization() }
-            catch { problem = error.localizedDescription }
+            catch { problem = LocalizedMessage.from(error).rendered() }
             await updateNotificationStatus()
         }
     }
@@ -339,8 +342,8 @@ final class AppModel: ObservableObject {
         Task {
             do {
                 try await notifications.requestAuthorization()
-                try await notifications.send(title: "Sync-Kopien", body: "Testmitteilung. Es wurde keine Datei kopiert.", databaseID: nil)
-            } catch { problem = error.localizedDescription }
+                try await notifications.send(title: L10n.appName, body: L10n.text("Test notification. No file was copied."), databaseID: nil)
+            } catch { problem = LocalizedMessage.from(error).rendered() }
             await updateNotificationStatus()
         }
     }
@@ -348,7 +351,7 @@ final class AppModel: ObservableObject {
     func setLogin(_ enabled: Bool) {
         guard !isDemo, !isStopping, !loadFailed, let environment else { return }
         do { try environment.setLogin(enabled) }
-        catch { problem = error.localizedDescription }
+        catch { problem = LocalizedMessage.from(error).rendered() }
         let login = environment.loginStatus()
         loginEnabled = login.enabled
         loginNeedsApproval = login.needsApproval
@@ -367,7 +370,7 @@ final class AppModel: ObservableObject {
             return true
         } catch {
             persistenceFailed = true
-            problem = "Einstellungen konnten nicht gespeichert werden. \(error.localizedDescription)"
+            problem = L10n.format("Settings could not be saved. %@", LocalizedMessage.from(error).rendered())
             return false
         }
     }
@@ -418,28 +421,28 @@ final class AppModel: ObservableObject {
                 let enabledIDs = Set(databases.filter { preference(for: $0).enabled }.map { $0.id.uuidString })
                 pendingNotifications.removeAll { $0.databaseID.map { !enabledIDs.contains($0) } ?? ($0.kind == \.failures) }
                 if recoveredSource {
-                    preferences.history.insert(HistoryEntry(date: Date(), databaseID: nil, name: "Strongbox", message: "Lesezugriff funktioniert wieder", isError: false), at: 0)
-                    if preferences.notifications.recoveries { pendingNotifications.append(PendingNotification(kind: \.recoveries, title: "Strongbox: Fehler behoben", body: "Die lokalen Backups können wieder geprüft werden.", databaseID: nil)) }
+                    preferences.history.insert(HistoryEntry(date: Date(), databaseID: nil, name: "Strongbox", message: LocalizedMessage(key: "Read access is working again"), isError: false), at: 0)
+                    if preferences.notifications.recoveries { pendingNotifications.append(PendingNotification(kind: \.recoveries, title: L10n.text("Strongbox: Error resolved"), body: L10n.text("Local backups can be checked again."), databaseID: nil)) }
                 }
                 for database in databases where preference(for: database).enabled {
                     guard let state = states[database.id] else { continue }
                     if let failure = state.error {
                         if preference(for: database).lastFailure != failure {
                             record(database, message: failure, isError: true)
-                            if preferences.notifications.failures { queueNotification(database, kind: \.failures, title: "\(database.displayName) konnte nicht kopiert werden", body: failure) }
+                            if preferences.notifications.failures { queueNotification(database, kind: \.failures, title: L10n.format("%@ could not be copied", database.displayName), body: failure.rendered()) }
                         }
                         preferences.databases[database.id.uuidString, default: DatabasePreferences()].lastFailure = failure
                     } else {
                         pendingNotifications.removeAll { $0.databaseID == database.id.uuidString && $0.kind == \.failures }
                         if preference(for: database).lastFailure != nil {
                             preferences.databases[database.id.uuidString, default: DatabasePreferences()].lastFailure = nil
-                            record(database, message: "Fehler behoben", isError: false)
-                            if preferences.notifications.recoveries { queueNotification(database, kind: \.recoveries, title: "\(database.displayName): Fehler behoben", body: "Die Lesekopie kann wieder aktualisiert werden.") }
+                            record(database, message: LocalizedMessage(key: "Error resolved"), isError: false)
+                            if preferences.notifications.recoveries { queueNotification(database, kind: \.recoveries, title: L10n.format("%@: Error resolved", database.displayName), body: L10n.text("The read-only copy can be updated again.")) }
                         }
                         if state.copied {
                             preferences.databases[database.id.uuidString, default: DatabasePreferences()].lastCopied = state.checked
-                            record(database, message: "Neue Kopie erstellt", isError: false)
-                            if preferences.notifications.copies { queueNotification(database, kind: \.copies, title: "\(database.displayName) wurde kopiert", body: "Die neue Lesekopie liegt im gewählten Zielordner.") }
+                            record(database, message: LocalizedMessage(key: "New copy created"), isError: false)
+                            if preferences.notifications.copies { queueNotification(database, kind: \.copies, title: L10n.format("%@ was copied", database.displayName), body: L10n.text("The new read-only copy is in the selected destination folder.")) }
                         }
                     }
                 }
@@ -454,15 +457,16 @@ final class AppModel: ObservableObject {
                     // do not invalidate the independently verified source access.
                     sourceReadStatus = (error as? MirrorError) == .sourcePermissionDenied ? .unavailable : .available
                 }
-                problem = error.localizedDescription
+                problem = LocalizedMessage.from(error).rendered()
                 states = [:]
                 sourceScope = nil
                 monitoredPaths = []
                 monitor?.stop()
-                if preferences.globalFailure != problem {
-                    preferences.history.insert(HistoryEntry(date: Date(), databaseID: nil, name: "Strongbox", message: error.localizedDescription, isError: true), at: 0)
-                    if preferences.notifications.failures { pendingNotifications.append(PendingNotification(kind: \.failures, title: "Strongbox konnte nicht gelesen werden", body: error.localizedDescription, databaseID: nil)) }
-                    preferences.globalFailure = problem
+                let failure = LocalizedMessage.from(error)
+                if preferences.globalFailure != failure {
+                    preferences.history.insert(HistoryEntry(date: Date(), databaseID: nil, name: "Strongbox", message: LocalizedMessage.from(error), isError: true), at: 0)
+                    if preferences.notifications.failures { pendingNotifications.append(PendingNotification(kind: \.failures, title: L10n.text("Strongbox could not be read"), body: failure.rendered(), databaseID: nil)) }
+                    preferences.globalFailure = failure
                     _ = save()
                 }
             }
@@ -495,13 +499,13 @@ final class AppModel: ObservableObject {
     private nonisolated static func scan(_ bookmark: Data, preferences: Preferences, previousPaths: [Data: String], mounts: [FolderPathDisplay.Mount], resolveFolder: @Sendable (Data) throws -> FolderAccess) throws -> ScanResult {
         let source: FolderAccess
         do { source = try resolveFolder(bookmark) }
-        catch { throw SourceScanFailure(message: error.localizedDescription, sourcePath: nil, readStatus: sourceFailureStatus(error)) }
+        catch { throw SourceScanFailure(message: LocalizedMessage.from(error), sourcePath: nil, readStatus: sourceFailureStatus(error)) }
         defer { withExtendedLifetime(source) {} }
         let sourcePath = FolderPathDisplay.label(for: source.url.path, mounts: mounts, previous: previousPaths[bookmark])
         let databases: [Database]
         do { databases = try StrongboxCatalog.read(groupContainer: source.url) }
         catch {
-            throw SourceScanFailure(message: error.localizedDescription, sourcePath: sourcePath, readStatus: sourceFailureStatus(error))
+            throw SourceScanFailure(message: LocalizedMessage.from(error), sourcePath: sourcePath, readStatus: sourceFailureStatus(error))
         }
         let active = databases.filter { preferences.databases[$0.id.uuidString]?.enabled == true }
         var targets: [UUID: FolderAccess] = [:]
@@ -524,14 +528,14 @@ final class AppModel: ObservableObject {
                 targets[database.id] = folder
             } catch {
                 if (error as? MirrorError) == .sourcePermissionDenied { sourcePermissionDenied = true }
-                states[database.id] = DatabaseState(checked: Date(), error: error.localizedDescription)
+                states[database.id] = DatabaseState(checked: Date(), error: LocalizedMessage.from(error))
             }
         }
         let conflicts = try DestinationPlanner.conflictingDatabaseIDs(destinations, sourceRoot: source.url)
         for database in active {
             guard states[database.id] == nil else { continue }
             if conflicts.contains(database.id) {
-                states[database.id] = DatabaseState(checked: Date(), targetName: targetNames[database.id], error: ConfigurationError.collidingDestination.localizedDescription)
+                states[database.id] = DatabaseState(checked: Date(), targetName: targetNames[database.id], error: ConfigurationError.collidingDestination.message)
                 continue
             }
             guard let target = targets[database.id] else { continue }
@@ -540,13 +544,13 @@ final class AppModel: ObservableObject {
                 state.backup = try StrongboxBackups.newest(for: database, groupContainer: source.url)
             } catch {
                 if sourceFailureStatus(error) == .unavailable { sourcePermissionDenied = true }
-                state.error = error.localizedDescription
+                state.error = LocalizedMessage.from(error)
             }
             if let backup = state.backup {
                 do { state.copied = try MirrorEngine.copy(backup: backup, to: target.url, filename: database.filename) == .copied }
                 catch {
                     if (error as? MirrorError) == .sourcePermissionDenied { sourcePermissionDenied = true }
-                    state.error = error.localizedDescription
+                    state.error = LocalizedMessage.from(error)
                 }
             }
             states[database.id] = state
@@ -572,7 +576,7 @@ final class AppModel: ObservableObject {
             scanAgain = true
         } catch {
             if Self.sourceFailureStatus(error) == .unavailable { sourceReadStatus = .unavailable }
-            let message = "Dateiüberwachung nicht verfügbar. Die regelmäßige Prüfung bleibt aktiv. \(error.localizedDescription)"
+            let message = LocalizedMessage(key: "File monitoring is unavailable. Periodic checks remain active. %@", causes: [LocalizedMessage.from(error)])
             if preferences.history.first?.message != message {
                 preferences.history.insert(HistoryEntry(date: Date(), databaseID: nil, name: "App", message: message, isError: true), at: 0)
                 _ = save()
@@ -580,7 +584,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func record(_ database: Database, message: String, isError: Bool) {
+    private func record(_ database: Database, message: LocalizedMessage, isError: Bool) {
         preferences.history.insert(HistoryEntry(date: Date(), databaseID: database.id, name: database.displayName, message: message, isError: isError), at: 0)
         preferences.history = Array(preferences.history.prefix(200))
     }
@@ -609,7 +613,7 @@ final class AppModel: ObservableObject {
             } catch {
                 // Events without permission are kept in history, not delivered late.
                 pendingNotifications.removeAll()
-                notificationStatus = error.localizedDescription
+                notificationStatus = LocalizedMessage.from(error).rendered()
                 return
             }
         }
