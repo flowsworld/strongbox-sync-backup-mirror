@@ -1,27 +1,44 @@
 import Foundation
 import Darwin
 
-public enum MirrorError: Error, LocalizedError, Equatable {
+public enum MirrorError: Error, LocalizedError, LocalizedMessageError, Equatable {
     case invalidMetadata, invalidDatabase, inconsistentIdentifier
     case missingBackup, unsafeFile, emptyBackup, changedFile, unsafeFilename, sameFile
     case targetBusy, permissionDenied, sourcePermissionDenied
     case fileOperation(String)
 
-    public var errorDescription: String? {
+    public var errorDescription: String? { message.rendered() }
+
+    public var message: LocalizedMessage {
         switch self {
-        case .invalidMetadata: "Die Strongbox-Metadaten haben ein unbekanntes oder ungültiges Format."
-        case .invalidDatabase: "Die Strongbox-Sync-Datenbank ist nicht eindeutig zugeordnet."
-        case .inconsistentIdentifier: "Die Kennungen der Strongbox-Datenbank stimmen nicht überein."
-        case .missingBackup: "Für diese Datenbank wurde kein lokales Backup gefunden."
-        case .unsafeFile: "Ein Dateipfad ist unsicher oder enthält eine Verknüpfung."
-        case .emptyBackup: "Das neueste Backup ist leer. Die bestehende Kopie bleibt erhalten."
-        case .changedFile: "Eine Datei wurde während des Kopierens verändert. Bitte erneut versuchen."
-        case .unsafeFilename: "Der Dateiname ist ungültig."
-        case .sameFile: "Quelle und Ziel dürfen nicht dieselbe Datei sein."
-        case .permissionDenied: "Der Dateizugriff wurde verweigert."
-        case .sourcePermissionDenied: "Der Lesezugriff auf das Strongbox-Backup wurde verweigert."
-        case .targetBusy: "In diesem Zielordner läuft bereits ein Kopiervorgang. Bitte erneut versuchen."
-        case .fileOperation(let reason): "Die Datei konnte nicht verarbeitet werden: \(reason)"
+        case .invalidMetadata: return LocalizedMessage(key: "The Strongbox metadata has an unknown or invalid format.")
+        case .invalidDatabase: return LocalizedMessage(key: "The Strongbox Sync database cannot be uniquely identified.")
+        case .inconsistentIdentifier: return LocalizedMessage(key: "The Strongbox database identifiers do not match.")
+        case .missingBackup: return LocalizedMessage(key: "No local backup was found for this database.")
+        case .unsafeFile: return LocalizedMessage(key: "A file path is unsafe or contains a symbolic link.")
+        case .emptyBackup: return LocalizedMessage(key: "The latest backup is empty. The existing copy is preserved.")
+        case .changedFile: return LocalizedMessage(key: "A file changed during copying. Please try again.")
+        case .unsafeFilename: return LocalizedMessage(key: "The filename is invalid.")
+        case .sameFile: return LocalizedMessage(key: "Source and destination must not be the same file.")
+        case .permissionDenied: return LocalizedMessage(key: "File access was denied.")
+        case .sourcePermissionDenied: return LocalizedMessage(key: "Read access to the Strongbox backup was denied.")
+        case .targetBusy: return LocalizedMessage(key: "A copy is already running in this destination folder. Please try again.")
+        case .fileOperation(let reason):
+            if let code = (1...ELAST).first(where: { String(cString: strerror($0)) == reason }) {
+                let knownReasons: Set<String> = [
+                    "No such file or directory", "Permission denied", "Operation not permitted",
+                    "No route to host", "Network is down", "Network is unreachable", "Input/output error",
+                    "No space left on device", "Read-only file system", "Operation timed out",
+                    "Device not configured", "Resource busy", "Invalid argument", "Connection refused",
+                    "Socket is not connected", "Operation not supported", "File name too long",
+                    "Too many open files", "Interrupted system call", "Is a directory", "Not a directory",
+                ]
+                let detail = knownReasons.contains(reason)
+                    ? LocalizedMessage(key: reason)
+                    : LocalizedMessage(key: "File operation failed (code %@).", arguments: [String(code)])
+                return LocalizedMessage(key: "The file could not be processed: %@", causes: [detail])
+            }
+            return LocalizedMessage(key: "The file could not be processed. Technical detail (original language): %@", arguments: [reason])
         }
     }
 }

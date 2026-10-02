@@ -1,21 +1,24 @@
 import AppKit
 import Darwin
 import Foundation
+import SyncCopiesCore
 import ServiceManagement
 import UserNotifications
 
-enum FolderPermissionError: LocalizedError {
+enum FolderPermissionError: LocalizedError, LocalizedMessageError {
     case staleBookmark
     case accessDenied
     case notDirectory
     case notificationsDenied
 
-    var errorDescription: String? {
+    var errorDescription: String? { message.rendered() }
+
+    var message: LocalizedMessage {
         switch self {
-        case .staleBookmark: "Die gespeicherte Ordnerfreigabe ist veraltet. Bitte den Ordner erneut freigeben."
-        case .accessDenied: "Der freigegebene Ordner ist nicht zugänglich. Bitte die Freigabe erneuern."
-        case .notDirectory: "Bitte einen Ordner auswählen, der kein symbolischer Link ist."
-        case .notificationsDenied: "Mitteilungen sind nicht erlaubt. Die Freigabe lässt sich in den macOS-Systemeinstellungen ändern."
+        case .staleBookmark: LocalizedMessage(key: "The saved folder permission is out of date. Please allow access to the folder again.")
+        case .accessDenied: LocalizedMessage(key: "The permitted folder is inaccessible. Please allow access again.")
+        case .notDirectory: LocalizedMessage(key: "Please choose a folder that is not a symbolic link.")
+        case .notificationsDenied: LocalizedMessage(key: "Notifications are not allowed. You can change the permission in macOS System Settings.")
         }
     }
 }
@@ -55,7 +58,7 @@ enum FolderPicker {
         let panel = NSOpenPanel()
         panel.title = title
         panel.message = message
-        panel.prompt = readOnly ? "Lesezugriff erlauben" : "Zielordner wählen"
+        panel.prompt = readOnly ? L10n.text("Allow read access") : L10n.text("Choose destination folder")
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.canCreateDirectories = !readOnly

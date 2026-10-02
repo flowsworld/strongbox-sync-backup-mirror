@@ -13,11 +13,13 @@ public struct CopyDestination: Sendable {
     }
 }
 
-public enum DestinationError: Error, LocalizedError, Equatable {
+public enum DestinationError: Error, LocalizedError, LocalizedMessageError, Equatable {
     case insideSource
 
-    public var errorDescription: String? {
-        "Der Zielordner muss außerhalb des Strongbox-Ordners liegen."
+    public var errorDescription: String? { message.rendered() }
+
+    public var message: LocalizedMessage {
+        LocalizedMessage(key: "The destination folder must be outside the Strongbox folder.")
     }
 }
 
