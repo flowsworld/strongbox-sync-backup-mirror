@@ -1,10 +1,10 @@
 # macOS update distribution
 
-Research for [issue #11](https://github.com/flowsworld/strongbox-sync-backup-mirror/issues/11), checked on 2026-10-02. This records an implementation proposal, not an approved Sparkle dependency or a completed signed updater. No production account, update host, signing key or public release was created.
+Research for [issue #11](https://github.com/flowsworld/strongbox-sync-backup-mirror/issues/11), checked on 2026-10-02. The initial research proposed Sparkle. Flo has since approved Sparkle 2.10.0 and a separate Info page. The direct-only adapter and local packaging are implemented; a production-signed old-to-new update is not proven. No production account, update host, signing key or public release was created.
 
 ## Verified baseline
 
-The app targets macOS 13 in [Package.swift](../../macos-app/Package.swift). Its executable depends only on `SyncCopiesCore`. The development build initially inspected for this research uses the bundle identifier `cloud.diesis.sync-copies`, version `0.1.0`, build `1` and ad-hoc signing in [build.zsh](../../macos-app/build.zsh). The accompanying release-preparation work adds offline universal macOS 13+ development and direct candidate packaging in [release.zsh](../../macos-app/release.zsh), keeping that identifier. These candidates have no updater and establish neither a selected production identity nor signed grant continuity. There is no updater integration.
+The app targets macOS 13 in [Package.swift](../../macos-app/Package.swift). Its default development and Store graphs depend only on `SyncCopiesCore`; explicit direct builds additionally resolve Sparkle 2.10.0. The development build initially inspected for this research uses the bundle identifier `cloud.diesis.sync-copies`, version `0.1.0`, build `1` and ad-hoc signing in [build.zsh](../../macos-app/build.zsh). The accompanying release-preparation work adds offline universal macOS 13+ development and direct candidate packaging in [release.zsh](../../macos-app/release.zsh), keeping that identifier. The release-preparation baseline had no updater. Direct candidates now embed the adapter and framework, disabled without an explicit HTTPS feed and Ed25519 public key. They establish neither a selected production identity nor signed grant continuity.
 
 [entitlements.plist](../../macos-app/entitlements.plist) grants App Sandbox, user-selected read/write files and app-scoped bookmarks. Strongbox source selection creates a read-only security-scoped bookmark in [Services.swift](../../macos-app/Sources/SyncCopies/Services.swift). The updater must not change that restriction.
 
@@ -36,7 +36,7 @@ Use one copy engine and app UI with an explicit build configuration. Keep update
 
 Production bundle identifiers are proposals, not registered identities. The current candidate tooling's shared identifier is development-only evidence. Prefer identity continuity for the eventual direct app where it can preserve existing settings and grants. An ad-hoc-to-Developer-ID change still needs a real grant-persistence test; the identifier alone does not prove continuity. Separate Store/beta identifiers make side-by-side installation, containers, login registration and feed isolation explicit, but require migration and new grants. Flo must confirm continuity, the final product name, Apple team and identities before registration or the first persistent signed installation. Keep the final app bundle filename unchanged within each identity's update stream.
 
-Pin Sparkle exactly to 2.10.0 after dependency approval. Commit the resolved version and verify the downloaded artifact against its pinned checksum. Keep the framework and release tools at the same version. Do not use a floating dependency range or nightly build for release packaging.
+Sparkle is approved and pinned exactly to 2.10.0. Commit the resolved version and verify the downloaded artifact against its pinned checksum. Keep the framework and release tools at the same version. Do not use a floating dependency range or nightly build for release packaging.
 
 Use `CFBundleShortVersionString` for the user-visible three-part product version. Allocate a globally increasing positive integer `CFBundleVersion` for each release build. For example, product `0.2.0`, build `100` can be a beta and product `0.2.0`, build `101` its stable successor. Failed release builds consume their number. Channel configurations built for one release may share the number if their source and product version match. The allocator must check previous shipped builds, not just CI's current run number. Sparkle selects newer builds through `CFBundleVersion`; do not substitute a custom comparator. [Sparkle integration](https://sparkle-project.org/documentation/), [delegate version-comparison contract](https://sparkle-project.org/documentation/api-reference/Protocols/SPUUpdaterDelegate.html).
 
@@ -71,7 +71,7 @@ Run `codesign --verify --deep --strict` for verification, inspect signatures and
 
 ## Proposed behavior and privacy
 
-Use Sparkle's standard controller for its own update flow. Add app controls only after distinct static mocks have been published and Flo has chosen one. The app must provide German and English manual-check actions and separate choices for automatic checking and automatic download/installation. Recommended defaults are automatic checks off and automatic installation off; the user can enable each. Store builds show the Store destination and explain that automatic updates follow Store preferences. They must not offer a direct-install action.
+Use Sparkle's standard controller for its own update flow. Flo approved the separate Info page; its controls are implemented there. The app must provide German and English manual-check actions and separate choices for automatic checking and automatic download/installation. Recommended defaults are automatic checks off and automatic installation off; the user can enable each. Store builds show the Store destination and explain that automatic updates follow Store preferences. They must not offer a direct-install action.
 
 For the direct proposal, configure `SUEnableAutomaticChecks=false`, `SUAutomaticallyUpdate=false`, `SUEnableSystemProfiling=false`, `SUEnableJavaScript=false`, `SUVerifyUpdateBeforeExtraction=true` and `SURequireSignedFeed=true`. Set `SUSignedFeedFailureExpirationInterval=0` so a broken feed signature does not silently expire. This fails closed if the signing key is lost, so the key backup and manually authenticated recovery procedure are release requirements. Bind user changes through Sparkle's settings APIs, not repeated default resets. [Sparkle customization](https://sparkle-project.org/documentation/customization/).
 
@@ -135,14 +135,26 @@ For each run, record OS/architecture, commit, A/B versions, artifact hashes, sig
 
 ## Work still required for issue #11
 
-This research meets the design-record portion only. The following acceptance criteria remain open:
+The research and unconfigured direct/Store candidate implementation are complete. The following acceptance criteria remain open:
 
-- Flo's approval of Sparkle as the first third-party dependency and the final distribution identities.
+- Flo's confirmation of final production distribution identities and the actual feed/public key.
 - An authorized Apple account/team, Developer ID and Store signing/provisioning material, and controlled key backups.
-- A reviewed release packager that embeds/signs Sparkle only in direct builds.
-- Static UI mocks and Flo's selection, followed by German/English controls.
-- Updater shutdown integration and tested durable schema migration.
+- Independent review of the new direct-only packager and updater adapter.
+- Parent integration of the approved Info page and its German/English resources.
+- Final host shutdown integration, cancellation recovery and tested durable schema migration.
 - A real signed A-to-B sandbox test, nested helper/notarization checks and grant-persistence evidence across the supported OS/architecture matrix.
 - An approved production HTTPS host and privacy/log-retention decision. Public publication is a separate authorization.
 
 Do not close issue #11 or label the app updater-ready from this document alone.
+
+## Local implementation evidence
+
+`DIESIS_DISTRIBUTION=direct` selects the Sparkle package, compiler flag and executable runpath. The default development and explicit Store manifests have empty external dependency graphs. The direct dependency lock is [ThirdParty/Sparkle-Package.resolved](../../macos-app/ThirdParty/Sparkle-Package.resolved); the build script installs it for direct resolution and removes its own temporary root lock afterward. This avoids SwiftPM resolving stale direct pins while building a dependency-free channel. The full license is included in direct app resources.
+
+[AppUpdates.swift](../../macos-app/Sources/SyncCopies/AppUpdates.swift) starts only after the app launches, only with valid direct feed/key settings, and never in preview. It uses the standard Sparkle driver, signed feeds and pre-extraction archive verification. Automatic checks and installation default off. System profiling is forced off; the adapter supplies no feed parameters. The Info page presents version, build, distribution, manual checking and separate automatic preferences. Store controls open only an explicitly configured `apps.apple.com` HTTPS destination.
+
+The host supplies `prepareForUpdate`, which must wait for active copy/check work and durably save settings. The adapter retains a postponed installation after a failed save for explicit retry. `isInstallingUpdate` also identifies install-on-quit so the host applies the same durability gate to that path. The host's idempotent `resumeAfterCancelledUpdate` callback restores normal copying if Sparkle aborts after preparation. These callbacks are separately tested; they do not replace signed installer validation.
+
+On 2026-10-02, seven focused adapter/configuration tests passed using the dependency-free development graph. Universal local direct and Store candidates built successfully. Their Mach-O deployment floor is 13.0 for both arm64 and x86_64. Direct has Sparkle and inside-out ad-hoc helper signatures. Store has no Sparkle framework, updater linkage, XPC helpers, update plist keys or Mach exceptions. Both channel manifests were inspected; deep/strict signatures passed. Both packaged executables loaded in isolated preview processes, which were then terminated. Invalid cross-channel feed settings, incomplete keys, HTTP feeds and non-Apple Store links failed before compilation. No candidate was installed, no signing identity or account was used, and no update feed was contacted. Full host integration and final channel audits are recorded in the parent task before release.
+
+The local SwiftPM binary downloader stalled. The same official artifact downloaded through `curl`, matched the pinned SHA-256 and was supplied through an isolated scratch cache. SwiftPM then validated/extracted it. No global package cache was changed and no alternate dependency source was used.

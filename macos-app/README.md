@@ -271,3 +271,46 @@ Die 8 neuen Mitteilungstests prüfen 16 Fälle ohne macOS-Freigabedialoge. Der
 vollständige native Testlauf besteht aus 69 Testfunktionen. Ergebnisse, Aufbau
 und Grenzen der nativen Prüfung stehen in
 [issue-6-notifications.md](../docs/testing/issue-6-notifications.md).
+
+## Info und Updates
+
+Die separate Info-Seite zeigt Version, Build und Vertriebskanal. Normale
+Entwicklungsfassungen prüfen keine Updates. Ein Store-Build enthält weder
+Sparkle noch seine Helfer oder Update-Ausnahmen. Sein optionaler Store-Link
+muss ausdrücklich über `--store-url` angegeben werden.
+
+Direkte Fassungen verwenden das freigegebene Sparkle 2.10.0. Der Paketgraph
+enthält Sparkle nur mit `DIESIS_DISTRIBUTION=direct`; das Build-Skript setzt
+diese Auswahl über `--distribution direct`. Ein lokal ad-hoc signierter
+Kandidat lässt sich ohne Feed oder Schlüssel zum Prüfen der Paketstruktur bauen:
+
+```sh
+zsh macos-app/build.zsh --distribution direct --universal --output "$PWD/macos-app/build/direct-fixture/Sync-Kopien.app"
+zsh macos-app/build.zsh --distribution store --universal --output "$PWD/macos-app/build/store-fixture/Sync-Kopien.app"
+```
+
+Ohne ausdrücklich angegebene HTTPS-Appcast-Adresse und öffentlichen
+Ed25519-Schlüssel bleibt der Updater abgeschaltet. Es gibt keinen
+voreingestellten Produktionshost oder erzeugten Produktionsschlüssel.
+`--feed-url` und `--public-key` müssen gemeinsam angegeben werden. Automatische
+Prüfungen und automatische Downloads/Installation sind zunächst ausgeschaltet.
+
+Die Direct-Release-Vorbereitung verlangt zusätzlich zum vorhandenen
+Developer-ID-Argument `DIESIS_UPDATE_FEED_URL` und `DIESIS_UPDATE_PUBLIC_KEY`.
+`release.zsh store VERSION BUILD` erstellt nur einen lokalen ad-hoc signierten
+Store-Pakettest, keine App-Store-Einreichung. Eine tatsächliche Einreichung,
+Notarisierung, Veröffentlichung und Installation führt kein Skript aus.
+
+Der Direct-Lock liegt getrennt unter `ThirdParty/Sparkle-Package.resolved`,
+damit normale Entwicklungs- und Store-Builds keine unbenutzten Direct-Pins
+auflösen. Der Packager signiert Installer, Autoupdate, Updater und Framework
+innen nach außen. Die Direct-Ausnahmen verändern den Strongbox-Lesezugriff
+nicht. Die Store-Entitlements enthalten keine Sparkle-Ausnahmen.
+
+Vor einem Update wartet die App auf laufende Kopier-/Prüfarbeit und muss
+Einstellungen dauerhaft sichern. Fehlgeschlagenes Sichern blockiert die
+Installation bis zu einem ausdrücklichen Wiederholungsversuch. Ein
+abgebrochenes Update muss die Kopierauslöser wiederherstellen. Der erforderliche
+produktionssignierte A-zu-B-Test, Freigaben nach einem echten Upgrade,
+Notarisierung und die macOS-/Architekturmatrix bleiben offen. Details stehen in
+[der Update-Recherche](../docs/research/macos-update-distribution.md).
