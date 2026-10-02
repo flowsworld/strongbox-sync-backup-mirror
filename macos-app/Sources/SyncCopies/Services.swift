@@ -87,8 +87,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func refreshAuthorization() async {
-        let settings = await center.notificationSettings()
-        switch settings.authorizationStatus {
+        switch await authorizationStatus() {
         case .notDetermined: status = "Noch nicht freigegeben"
         case .denied: status = "In macOS nicht erlaubt"
         case .authorized: status = "Erlaubt"
@@ -98,14 +97,18 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func requestAuthorization() async throws {
-        let allowed = try await center.requestAuthorization(options: [.alert, .sound])
+        let allowed = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Bool, any Error>) in
+            center.requestAuthorization(options: [.alert, .sound]) { @Sendable allowed, error in
+                if let error { continuation.resume(throwing: error) }
+                else { continuation.resume(returning: allowed) }
+            }
+        }
         await refreshAuthorization()
         guard allowed else { throw FolderPermissionError.notificationsDenied }
     }
 
     func send(title: String, body: String, databaseID: String?) async throws {
-        let settings = await center.notificationSettings()
-        guard [.authorized, .provisional].contains(settings.authorizationStatus) else {
+        guard [.authorized, .provisional].contains(await authorizationStatus()) else {
             throw FolderPermissionError.notificationsDenied
         }
         let content = UNMutableNotificationContent()
@@ -113,7 +116,23 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         content.body = body
         content.sound = .default
         if let databaseID { content.userInfo = ["databaseID": databaseID] }
-        try await center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+            center.add(request) { @Sendable error in
+                if let error { continuation.resume(throwing: error) }
+                else { continuation.resume() }
+            }
+        }
+    }
+
+    private func authorizationStatus() async -> UNAuthorizationStatus {
+        // Older SDKs do not mark UNNotificationSettings as Sendable. Extract
+        // the value inside Apple's callback instead of crossing actors with it.
+        await withCheckedContinuation { continuation in
+            center.getNotificationSettings { @Sendable settings in
+                continuation.resume(returning: settings.authorizationStatus)
+            }
+        }
     }
 
     nonisolated func userNotificationCenter(
@@ -183,6 +202,7 @@ private final class DirectoryWatch: @unchecked Sendable {
 final class FileMonitor {
     private let onChange: @MainActor @Sendable () -> Void
     private var watches: [DirectoryWatch] = []
+    private var generation = UUID()
 
     init(onChange: @escaping @MainActor @Sendable () -> Void) {
         self.onChange = onChange
@@ -191,15 +211,21 @@ final class FileMonitor {
     /// Replaces the current set only when every requested directory could be opened.
     func watch(_ urls: [URL]) throws {
         var replacement: [DirectoryWatch] = []
+        let nextGeneration = UUID()
         var paths: Set<String> = []
         for url in urls where paths.insert(url.standardizedFileURL.path).inserted {
-            replacement.append(try DirectoryWatch(url: url, onChange: onChange))
+            replacement.append(try DirectoryWatch(url: url) { [weak self] in
+                guard let self, self.generation == nextGeneration else { return }
+                self.onChange()
+            })
         }
         stop()
+        generation = nextGeneration
         watches = replacement
     }
 
     func stop() {
+        generation = UUID()
         watches.forEach { $0.cancel() }
         watches.removeAll()
     }
