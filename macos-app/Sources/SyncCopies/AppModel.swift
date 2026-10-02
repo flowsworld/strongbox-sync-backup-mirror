@@ -138,6 +138,7 @@ final class AppModel: ObservableObject {
     private var monitoredPaths: Set<String> = []
     private var monitor: FileMonitor?
     private var notificationAttemptRunning = false
+    private var notificationRevisions: [WritableKeyPath<NotificationPreferences, Bool>: Int] = [:]
 
     init(demo: Bool = false, environment suppliedEnvironment: AppEnvironment? = nil, folderMounts: @escaping @Sendable () -> [FolderPathDisplay.Mount] = FolderPathDisplay.mountedSMBFolders) {
         isDemo = demo
@@ -301,6 +302,10 @@ final class AppModel: ObservableObject {
     func setNotification(_ key: WritableKeyPath<NotificationPreferences, Bool>, to value: Bool) {
         guard !isStopping, !loadFailed else { return }
         preferences.notifications[keyPath: key] = value
+        if !value {
+            notificationRevisions[key, default: 0] += 1
+            notifications?.cancelPending(kind: key)
+        }
         pendingNotifications.removeAll { !preferences.notifications[keyPath: $0.1] }
         guard save() else { return }
         if value, !isDemo, let notifications {
@@ -585,7 +590,14 @@ final class AppModel: ObservableObject {
             let pending = pendingNotifications.removeFirst()
             guard preferences.notifications[keyPath: pending.1] else { continue }
             do {
-                try await notifications.send(title: pending.2, body: pending.3, databaseID: pending.4)
+                let revision = notificationRevisions[pending.1, default: 0]
+                try await notifications.send(title: pending.2, body: pending.3, databaseID: pending.4, kind: pending.1) { [weak self] in
+                    guard let self, !self.isStopping,
+                          self.notificationRevisions[pending.1, default: 0] == revision,
+                          self.preferences.notifications[keyPath: pending.1] else { return false }
+                    return pending.4.map { self.preferences.databases[$0]?.enabled == true } ?? true
+                }
+                notificationStatus = notifications.status
             } catch {
                 // Events without permission are kept in history, not delivered late.
                 pendingNotifications.removeAll()
@@ -594,9 +606,12 @@ final class AppModel: ObservableObject {
             }
         }
     }
-    private func updateNotificationStatus() async {
+    func updateNotificationStatus() async {
         guard let notifications, !isStopping else { return }
         await notifications.refreshAuthorization()
         notificationStatus = notifications.status
+        if notifications.isAuthorized, problem == FolderPermissionError.notificationsDenied.localizedDescription {
+            problem = nil
+        }
     }
 }

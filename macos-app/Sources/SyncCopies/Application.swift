@@ -60,6 +60,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         if !model.sourceGranted || model.isDemo { showSettings() }
     }
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        Task { await model.updateNotificationStatus() }
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !terminationPending else { return .terminateLater }
         terminationPending = true
