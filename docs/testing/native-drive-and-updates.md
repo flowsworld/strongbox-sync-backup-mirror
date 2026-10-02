@@ -25,8 +25,16 @@ Bash syntax plus ShellCheck passed for the prepared local Google wizard.
 | Archive | Recorded ZIP SHA-256 matched; extracted signature verified |
 | Detached copy diagnostics | 19 isolated packaged copy checks passed while the entire `.build` directory was unavailable |
 | Detached launch | English, German and French fallback demo processes remained running without `.build` resources |
+| Store fixture | Universal build passed; no Sparkle linkage/framework, SU settings or updater Mach entitlement; signature verified |
+| Direct fixture | Universal build with synthetic client/feed passed; exact Sparkle 2.10.0, nested helper signatures verified, Downloader excluded, profile reporting off |
 | Direct compilation | Swift 6 typechecks passed for arm64 and x86_64 at macOS 13 with Sparkle 2.10.0 |
 | Privacy manifest | Embedded file timestamp and elapsed-time declarations validated; no tracking or developer-collected data declared |
+
+The direct fixture used an official archive whose SHA-256 matched the pinned
+Sparkle manifest. SwiftPM's download stalled; the same archive was fetched with
+curl and placed in this private build cache before compiling. This fallback did
+not change package pins or source. The synthetic client/feed were never used to
+launch a connection or contact an update host.
 
 The detached diagnostic uses two synthetic databases and private sandbox
 fixtures. It covers newest backups, initial copies, unchanged inode preservation,
