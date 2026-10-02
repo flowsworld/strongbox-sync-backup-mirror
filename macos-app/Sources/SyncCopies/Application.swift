@@ -77,13 +77,16 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         guard !terminationPending else { return .terminateLater }
         terminationPending = true
         Task {
-            // Install-on-quit must use the same durable gate as a prompted update.
-            if updates.isInstallingUpdate, !(await model.prepareForUpdate()) {
+            // Inspect the updater after active copies finish. A download may
+            // prepare an installer while this wait is suspended.
+            await model.quiesceForTermination()
+            if updates.requiresDurableQuit, !model.persistForUpdateTermination() {
+                model.resumeAfterCancelledUpdate()
                 terminationPending = false
                 sender.reply(toApplicationShouldTerminate: false)
                 return
             }
-            await model.shutdown()
+            model.completeShutdown()
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater

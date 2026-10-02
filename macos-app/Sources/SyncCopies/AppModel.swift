@@ -32,6 +32,7 @@ struct DatabasePreferences: Codable, Sendable {
     var enabled = false
     var target: Data?
     var lastCopied: Date?
+    var lastReconciled: Date?
     var lastFailure: LocalizedMessage?
 }
 
@@ -221,7 +222,7 @@ final class AppModel: ObservableObject {
     }
 
     var needsSetup: Bool {
-        isSetupPreview || (!isDemo && !preferences.databases.values.contains { $0.enabled && $0.lastCopied != nil })
+        isSetupPreview || (!isDemo && !preferences.databases.values.contains { $0.enabled && ($0.lastReconciled != nil || $0.lastCopied != nil) })
     }
     var activeCount: Int { databases.filter { preference(for: $0).enabled }.count }
     // A saved bookmark enables retrying; sourceReadStatus describes actual read access.
@@ -420,6 +421,7 @@ final class AppModel: ObservableObject {
         monitoredPaths = []
         environment?.scheduler.start { [weak self] in self?.refresh() }
         armMonitor()
+        refresh()
     }
 
     private func synchronizeSettings() throws {
@@ -434,15 +436,29 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func shutdown() async {
+    func quiesceForTermination() async {
         updatePreparationGeneration += 1
         isStopping = true
         environment?.scheduler.stop()
         monitor?.stop()
+        monitoredPaths = []
         scanAgain = false
         await scanTask?.value
+    }
+
+    func persistForUpdateTermination() -> Bool {
+        isStopping && save(durable: true)
+    }
+
+    func completeShutdown() {
+        guard isStopping else { return }
         sourceScope = nil
         instanceLock = nil
+    }
+
+    func shutdown() async {
+        await quiesceForTermination()
+        completeShutdown()
     }
 
     func refresh() {
@@ -493,6 +509,7 @@ final class AppModel: ObservableObject {
                         }
                         preferences.databases[database.id.uuidString, default: DatabasePreferences()].lastFailure = failure
                     } else {
+                        preferences.databases[database.id.uuidString, default: DatabasePreferences()].lastReconciled = state.checked
                         pendingNotifications.removeAll { $0.databaseID == database.id.uuidString && $0.kind == \.failures }
                         if preference(for: database).lastFailure != nil {
                             preferences.databases[database.id.uuidString, default: DatabasePreferences()].lastFailure = nil

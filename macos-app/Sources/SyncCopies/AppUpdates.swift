@@ -52,6 +52,13 @@ final class AppUpdates: NSObject, ObservableObject {
     @Published private(set) var isPreparingInstallation = false
     @Published private(set) var installationBlocked = false
     @Published private(set) var isInstallingUpdate = false
+    var requiresDurableQuit: Bool {
+        #if DIESIS_DIRECT_UPDATES
+        return isInstallingUpdate || (controller?.updater.sessionInProgress ?? false)
+        #else
+        return isInstallingUpdate
+        #endif
+    }
 
     private let demo: Bool
     private let prepareForUpdate: @MainActor () async -> Bool
