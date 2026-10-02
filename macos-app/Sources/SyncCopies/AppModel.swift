@@ -222,9 +222,9 @@ final class AppModel: ObservableObject {
     }
     var activeCount: Int { databases.filter { preference(for: $0).enabled }.count }
     // A saved bookmark enables retrying; sourceReadStatus describes actual read access.
-    var sourceGranted: Bool { isDemo || preferences.source != nil }
-    var commonTargetName: String { isDemo ? "/Users/Beispiel/Google Drive/Lesekopien" : label(for: preferences.defaultTarget) }
-    var sourceFolderPath: String { isDemo ? "/Users/Beispiel/Library/Group Containers/group.strongbox.mac.mcguill" : label(for: preferences.source) }
+    var sourceGranted: Bool { (isDemo && !isSetupPreview) || preferences.source != nil }
+    var commonTargetName: String { isDemo && !isSetupPreview ? "/Users/Beispiel/Google Drive/Lesekopien" : label(for: preferences.defaultTarget) }
+    var sourceFolderPath: String { isDemo && !isSetupPreview ? "/Users/Beispiel/Library/Group Containers/group.strongbox.mac.mcguill" : label(for: preferences.source) }
     var canChooseSource: Bool {
         !isDemo && !isChecking && !isStopping && !loadFailed &&
         (sourceReadStatus != .available || preferences.globalFailure != nil)
@@ -397,15 +397,22 @@ final class AppModel: ObservableObject {
         isStopping = true
         environment?.scheduler.stop()
         monitor?.stop()
+        monitoredPaths = []
         scanAgain = false
         await scanTask?.value
         guard save(durable: true) else {
-            isStopping = false
-            environment?.scheduler.start { [weak self] in self?.refresh() }
-            armMonitor()
+            resumeAfterCancelledUpdate()
             return false
         }
         return true
+    }
+
+    func resumeAfterCancelledUpdate() {
+        guard isStopping else { return }
+        isStopping = false
+        monitoredPaths = []
+        environment?.scheduler.start { [weak self] in self?.refresh() }
+        armMonitor()
     }
 
     private func synchronizeSettings() throws {

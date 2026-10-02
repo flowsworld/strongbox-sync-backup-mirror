@@ -187,6 +187,10 @@ struct AppModelTests {
         try await settled(model)
         #expect(model.problem == nil)
         #expect(try JSONDecoder().decode(Preferences.self, from: Data(contentsOf: fixture.preferencesURL)).source == Data("source".utf8))
+        try fixture.backup(fixture.first, bytes: "changed after cancelled update", name: "after-update.bak")
+        #expect(try await eventually {
+            try Data(contentsOf: fixture.common.appendingPathComponent(fixture.first.filename)) == Data("changed after cancelled update".utf8)
+        })
         await model.shutdown()
     }
 

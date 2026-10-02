@@ -25,8 +25,10 @@ struct SetupChecklist: View {
                 Divider()
                 Text(L10n.text("Only local Strongbox Sync backups are copied. The app never uploads files or writes back to Strongbox. Changes to copies are replaced on the next successful reconciliation."))
                     .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(L10n.text("Google Drive is optional and can be set up later on its own page."))
                     .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -43,6 +45,7 @@ struct SetupChecklist: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text(L10n.text(title)).fontWeight(.medium)
                 Text(L10n.text(description)).font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
             action()
