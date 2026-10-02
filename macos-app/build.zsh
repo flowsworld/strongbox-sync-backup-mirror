@@ -3,15 +3,30 @@ set -eu
 umask 077
 app_dir=${0:A:h}
 app_bundle="$app_dir/build/Sync-Kopien.app"
+typeset -a architecture_flags=()
+while (( $# )); do
+    case "$1" in
+        --universal) architecture_flags=(--arch arm64 --arch x86_64); shift ;;
+        --output)
+            (( $# >= 2 )) || { print -u2 'Missing app path after --output'; exit 2; }
+            app_bundle="$2"
+            [[ "$app_bundle" == /* && "$app_bundle" == *.app ]] || {
+                print -u2 'The output must be an absolute .app path'; exit 2
+            }
+            shift 2 ;;
+        *) print -u2 "Unknown build argument: $1"; exit 2 ;;
+    esac
+done
 # Use the installed Xcode SDK without changing the global developer selection.
 if [[ -z "${DEVELOPER_DIR:-}" && -d /Applications/Xcode.app/Contents/Developer ]]; then
     export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 fi
-swift build --package-path "$app_dir" -c release
-binary_dir=$(swift build --package-path "$app_dir" -c release --show-bin-path)
+swift build --package-path "$app_dir" -c release "${architecture_flags[@]}"
+binary_dir=$(swift build --package-path "$app_dir" -c release "${architecture_flags[@]}" --show-bin-path)
 mkdir -p "$app_bundle/Contents/MacOS"
 cp "$binary_dir/SyncCopies" "$app_bundle/Contents/MacOS/SyncCopies"
 mkdir -p "$app_bundle/Contents/Resources"
+cp "$app_dir/PrivacyInfo.xcprivacy" "$app_bundle/Contents/Resources/PrivacyInfo.xcprivacy"
 # L10n loads the embedded bundle from the app's standard resource directory.
 ditto "$binary_dir/SyncCopies_SyncCopiesCore.bundle" "$app_bundle/Contents/Resources/SyncCopies_SyncCopiesCore.bundle"
 for language in en de; do
