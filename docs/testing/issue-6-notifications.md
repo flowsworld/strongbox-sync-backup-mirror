@@ -12,7 +12,9 @@ sandbox. It used the normal `AppModel`, scheduler, file monitor,
 `NotificationService`, `ApplicationDelegate` and settings view. Its alternate
 bootstrap supplied the fixture settings and folder resolver through
 `AppEnvironment`. A temporary control runner invoked the model's existing
-notification actions and changed only those artificial files.
+notification actions and changed only those artificial files. A later, smaller
+fixture used the same isolated identity and the final `NotificationService` to
+check cancellation against the real system notification queue.
 
 Authorization changes used the real macOS prompt and the fixture app's entry in
 System Settings. Delivery counts came from
@@ -48,6 +50,7 @@ database names, identifiers, checksums, contents or screenshots.
 | Later permission revocation | Disabling only the fixture app's OS permission prevented delivery of a new copy event and preserved it in history. Re-enabling permission did not replay that event. The next explicit test and changed-copy events were delivered. |
 | First settings window | Clicking a database notification created the settings window, selected Databases and expanded that database's details. |
 | Selection after collapse | After collapsing the details, clicking a subsequent database notification expanded them again in the existing window. |
+| Cancellation after OS acceptance | The fixture held the service's add operation after macOS accepted a category request. Turning the category off before releasing that operation left zero delivered and zero pending requests after 1.5 seconds. A subsequent enabled category request delivered one notification. |
 
 The system reported active display sharing and suppressed interrupting banners.
 The notifications were present in the native delivered list and Notification
@@ -70,12 +73,15 @@ These are OS presentation limits, rather than evidence of failed scheduling.
 - A failing test reproduced delivery after turning a category off while its
   authorization query was suspended. The fix revalidates the event after that
   query. Other focused cases cover disabling and re-enabling during the query,
-  and disabling during system submission. Accepted pending requests are removed;
-  old requests from an earlier process are discarded at startup.
+  and disabling during system submission. Category requests have a one-second
+  delivery window, and disabling a category removes known in-flight identifiers
+  before the add operation returns. The submission test fails against the
+  previous immediate-delivery implementation and passes with this correction.
+  Old requests from an earlier process are discarded at startup.
 - All 107 existing Python tests passed. The release app built and passed
-  ad-hoc signature verification. The final named-field cleanup was checked with
-  the focused notification suite and another release build. A final startup check also verifies that only the
-  process owning the settings lock discards stale requests.
+  ad-hoc signature verification. The complete native suite and release build
+  passed again after the cancellation correction. A startup check also verifies
+  that only the process owning the settings lock discards stale requests.
 
 ## Independent review
 
@@ -84,6 +90,13 @@ replacing positional notification tuple fields with named fields. That suggestio
 was implemented. The Spec review found no incorrect implementation, missing state
 decision or scope creep. No findings were dismissed. The clients' cross-model
 review step applies to Claude Code and was skipped in this Codex session.
+
+The external Codex review identified a real race where an immediate request could
+deliver before its add callback and subsequent pending-request removal. The
+one-second delivery window and proactive cancellation fix that race. The focused
+regression and real-system cancellation fixture passed. The review ran on
+`a98ff19`; no second external run was requested. Greptile and Bugbot were excluded
+from the required reviews after Flo confirmed they are disabled.
 
 ## Cleanup
 

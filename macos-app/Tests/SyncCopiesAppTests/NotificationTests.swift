@@ -24,8 +24,9 @@ private final class NotificationRecorder {
                 return authorization == .authorized || authorization == .provisional
             },
             add: { [self] request in
-                if let hook = addHook { addHook = nil; await hook() }
+                // The system can accept a request before its callback returns.
                 requests.append(request)
+                if let hook = addHook { addHook = nil; await hook() }
             },
             removePending: { [self] in removed += $0 },
             cancelPending: { [self] prefix in removed += requests.filter { $0.identifier.hasPrefix(prefix) }.map(\.identifier) },
@@ -242,7 +243,13 @@ struct NotificationTests {
         try FileManager.default.moveItem(at: fixture.common, to: fixture.root.appendingPathComponent("offline"))
         model.refresh()
         try await eventually { gate.entered }
+        let request = try #require(recorder.requests.first)
+        let trigger = try #require(request.trigger as? UNTimeIntervalNotificationTrigger)
+        #expect(trigger.timeInterval == 1)
+        #expect(!trigger.repeats)
         model.setNotification(\.failures, to: false)
+        // Cancellation must be issued before the system's add callback returns.
+        #expect(recorder.removed.contains(request.identifier))
         gate.release()
         try await eventually { !model.isChecking }
         #expect(recorder.requests.count == 1)

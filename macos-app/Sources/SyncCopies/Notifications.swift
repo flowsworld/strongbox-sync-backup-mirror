@@ -6,7 +6,7 @@ import UserNotifications
 struct NotificationOperations {
     let authorization: () async -> UNAuthorizationStatus
     let requestAuthorization: () async throws -> Bool
-    let add: (UNNotificationRequest) async throws -> Void
+    let add: @MainActor (UNNotificationRequest) async throws -> Void
     let removePending: ([String]) -> Void
     let cancelPending: (String) -> Void
     let discardPending: () -> Void
@@ -14,6 +14,7 @@ struct NotificationOperations {
 
 @MainActor
 final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
+    private var inFlight: [WritableKeyPath<NotificationPreferences, Bool>: Set<String>] = [:]
     private var prefixes: [WritableKeyPath<NotificationPreferences, Bool>: String] = [:]
     var onSelectDatabase: ((String) -> Void)?
     private(set) var status = "Noch nicht geprüft"
@@ -103,13 +104,22 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         if let kind {
             content.userInfo["kind"] = kind == \.failures ? "failures" : (kind == \.copies ? "copies" : "recoveries")
         }
-        let request = UNNotificationRequest(identifier: prefix + UUID().uuidString, content: content, trigger: nil)
+        // Category alerts get a short cancellation window. Immediate delivery can
+        // precede the add callback, so removing requests only afterwards is too late.
+        let trigger = kind.map { _ in UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false) }
+        let identifier = prefix + UUID().uuidString
+        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+        if let kind { inFlight[kind, default: []].insert(identifier) }
+        defer { if let kind { inFlight[kind]?.remove(identifier) } }
         try await operations.add(request)
         // add itself can suspend after the category has been turned off.
-        if !isCurrent() { operations.removePending([request.identifier]) }
+        if !isCurrent() { operations.removePending([identifier]) }
     }
 
     func cancelPending(kind: WritableKeyPath<NotificationPreferences, Bool>) {
+        // Removal is submitted after add in the system's serial request queue,
+        // even when add has not called its completion handler yet.
+        operations.removePending(Array(inFlight[kind] ?? []))
         if let prefix = prefixes.removeValue(forKey: kind) { operations.cancelPending(prefix) }
     }
 
