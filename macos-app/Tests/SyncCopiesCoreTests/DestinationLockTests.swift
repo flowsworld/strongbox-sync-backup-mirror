@@ -152,6 +152,7 @@ struct DestinationLockTests {
             #expect(throws: MirrorError.targetBusy) {
                 try DestinationLock.acquire(in: directory, forceFileLock: true)
             }
+            #expect(flock(external!.value, LOCK_UN) == 0)
             external = nil
             let held = try DestinationLock.acquire(in: directory, forceFileLock: true)
             try held.validate()
