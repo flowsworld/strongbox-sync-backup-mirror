@@ -2,6 +2,17 @@ import Foundation
 
 /// Native bundle localization with English as the development language.
 public enum L10n {
+    // SwiftPM's generated accessor differs between build systems. Packaged apps
+    // always load their embedded resources, without a development-path fallback.
+    private static let resources: Bundle = {
+        guard Bundle.main.bundleURL.pathExtension == "app" else { return Bundle.module }
+        guard let url = Bundle.main.url(forResource: "SyncCopies_SyncCopiesCore", withExtension: "bundle"),
+              let bundle = Bundle(url: url) else {
+            preconditionFailure("Missing packaged localization resource bundle")
+        }
+        return bundle
+    }()
+
     public static let locale = resolvedLocale(
         preferredLanguages: Bundle.main.bundleURL.pathExtension == "app"
             ? Bundle.main.preferredLocalizations : Locale.preferredLanguages,
@@ -50,8 +61,8 @@ public enum L10n {
     }
 
     static func resourceBundle(language: String) -> Bundle {
-        guard let path = Bundle.module.path(forResource: language, ofType: "lproj"),
-              let bundle = Bundle(path: path) else { return Bundle.module }
+        guard let path = resources.path(forResource: language, ofType: "lproj"),
+              let bundle = Bundle(path: path) else { return resources }
         return bundle
     }
 }

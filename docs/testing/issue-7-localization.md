@@ -14,6 +14,10 @@ languages from the system preferences; the app adds no language preference.
 The main bundle advertises both languages and the build script embeds the
 SwiftPM resource bundle. `appName` provides the displayed development name and
 the localized `InfoPlist.strings` values generated during the build.
+Packaged apps explicitly resolve this bundle from `Contents/Resources`;
+SwiftPM's generated `Bundle.module` accessor is used only by tests and CLI hosts.
+This avoids the different lookup locations used by the native and swiftbuild
+build systems.
 
 The selected language is combined with the current regional settings for dates,
 byte counts and numbers. The native API behavior is documented by Apple's
@@ -73,7 +77,8 @@ Flo's listening check. No spoken recording or older-macOS UI session was made.
 ## Automated checks
 
 The CI workflow runs the native Swift tests and builds/verifies the signed app,
-in addition to the existing Python/helper tests. The build verifies resource
+then launches the demo with `.build` temporarily moved out of reach, in addition
+to the existing Python/helper tests. The build verifies resource
 packaging through the runnable app and its ad-hoc signature. The final local run
 passed all 69 Swift tests and all 107 Python tests. A release build and signature
 verification passed. Both resource sets contain 166 matching keys and matching
@@ -83,3 +88,12 @@ Independent standards and specification reviews covered the final diff after
 integration with #5. Resource parsing now reports errors, an unused identity API
 was removed, and two redundant nested resource lookups were simplified. The
 specification review found no source defects. No findings were dismissed.
+
+External Codex review found that the older native SwiftPM resource accessor
+could fall back to an absolute build path and crash after distribution. This
+was reproduced with the native-build resource bundle hidden, then fixed with
+the explicit app resource lookup. Isolated packaged apps built with both native
+and swiftbuild subsequently displayed German, English and the English fallback
+while their development resource bundles were hidden. All 69 Swift tests and the
+release build passed again. A focused independent verification found no defects
+in this correction or the added CI check.

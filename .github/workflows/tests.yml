@@ -20,6 +20,15 @@ jobs:
         run: swift test
       - name: Signed app and localization resources
         run: zsh build.zsh
+      - name: Packaged app without development resources
+        run: |
+          mv .build .build-resources-hidden
+          app_pid=''
+          trap 'if [ -n "$app_pid" ]; then kill "$app_pid" 2>/dev/null || true; fi; mv .build-resources-hidden .build' EXIT
+          build/Sync-Kopien.app/Contents/MacOS/SyncCopies --demo &
+          app_pid=$!
+          sleep 3
+          kill -0 "$app_pid"
 
   tests:
     runs-on: macos-15
