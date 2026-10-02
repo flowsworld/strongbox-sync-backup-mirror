@@ -1,0 +1,475 @@
+import Darwin
+import Foundation
+import Testing
+import SyncCopiesCore
+@testable import SyncCopies
+
+private actor DriveServerFixture {
+    let account = GoogleDriveAccount(identity: try! GoogleDriveIdentity(drivePermissionID: "synthetic-account", emailAddress: "fixture@example.invalid"), credentialID: UUID())
+    var listed: [GoogleDriveAccount] = []
+    var remote: UploadRemoteFile?
+    var problem: UploadVerificationFailure?
+    var calls = 0
+    var blocked = false
+    var suspended: CheckedContinuation<Void, Never>?
+    var folderBlocked = false
+    var folderSuspended: CheckedContinuation<Void, Never>?
+    var connectionBlocked = false
+    var connectionSuspended: CheckedContinuation<Void, Never>?
+    var connectionCancellations = 0
+    var disconnects = 0
+    var connected = true
+
+    func accounts() -> [GoogleDriveAccount] { connected ? (listed.isEmpty ? [account] : listed) : [] }
+    func connect() async -> GoogleDriveAccount {
+        if connectionBlocked { await withCheckedContinuation { connectionSuspended = $0 } }
+        return account
+    }
+    func blockConnection() { connectionBlocked = true }
+    func releaseConnection() { connectionBlocked = false; connectionSuspended?.resume(); connectionSuspended = nil }
+    func cancelConnection() { connectionCancellations += 1 }
+    func disconnect() { disconnects += 1; connected = false }
+    func folder(_ id: String) async throws -> GoogleDriveFolder {
+        if folderBlocked { await withCheckedContinuation { folderSuspended = $0 } }
+        return try GoogleDriveMetadata.resolveFolder(Data("{\"id\":\"\(id == "root" ? "resolved-root" : id)\",\"name\":\"Fixture folder\",\"mimeType\":\"application/vnd.google-apps.folder\",\"trashed\":false}".utf8), requestedID: id)
+    }
+    func query() async throws -> UploadRemoteFile? {
+        calls += 1
+        let captured = remote
+        if blocked { await withCheckedContinuation { suspended = $0 } }
+        if let problem { throw problem }
+        return captured
+    }
+    func set(remote: UploadRemoteFile?, problem: UploadVerificationFailure? = nil) { self.remote = remote; self.problem = problem }
+    func setBlocked(_ value: Bool) { blocked = value }
+    func release() { blocked = false; suspended?.resume(); suspended = nil }
+    func blockFolder() { folderBlocked = true }
+    func releaseFolder() { folderBlocked = false; folderSuspended?.resume(); folderSuspended = nil }
+    func rotate() {
+        listed = [GoogleDriveAccount(identity: try! GoogleDriveIdentity(drivePermissionID: "synthetic-account"), credentialID: UUID())]
+    }
+}
+
+@MainActor
+private final class DriveControllerFixture {
+    let root: URL
+    let server = DriveServerFixture()
+    let id = UUID()
+    var now: UInt64 = 100
+    var fingerprint = try! UploadLocalFingerprint(size: 12, sha256: String(repeating: "a", count: 64), md5: String(repeating: "b", count: 32))
+    var localFailure: UploadVerificationFailure?
+    var catalogFailure: UploadVerificationFailure?
+    var validationFailure: UploadVerificationFailure?
+    var validationFileFailure: MirrorError?
+    var localEnabled = true
+    var delivered: [DriveVerificationEvent] = []
+    var history: [DriveVerificationEvent] = []
+    var cancelled: [UUID] = []
+    var deliveryFails = false
+    var permissionDenied = false
+
+    init() throws {
+        root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    }
+    var settingsURL: URL { root.appendingPathComponent("drive-settings.json") }
+    var environment: DriveVerificationEnvironment {
+        let server = server
+        return DriveVerificationEnvironment(listAccounts: { await server.accounts() }, connect: { await server.connect() },
+            cancelConnect: { await server.cancelConnection() }, disconnect: { _ in await server.disconnect() }, resolveFolder: { _, id in try await server.folder(id) },
+            remoteFile: { _, _, _ in try await server.query() }, localInputs: { [self] in
+                if let catalogFailure { throw catalogFailure }
+                guard localEnabled else { return [] }
+                let local = fingerprint, localProblem = localFailure, validationProblem = validationFailure
+                let fileProblem = validationFileFailure
+                return [DriveLocalInput(id: id, name: "Fixture database", filename: "fixture.kdbx", destinationID: "destination-1", makeSnapshot: {
+                    if let localProblem { throw localProblem }
+                    return DriveLocalSnapshot(fingerprint: local, validate: {
+                        if let validationProblem { throw validationProblem }
+                        if let fileProblem { throw fileProblem }
+                    })
+                })]
+            }, deliver: { [self] event in
+                if deliveryFails { throw UploadVerificationFailure.providerUnavailable }
+                delivered.append(event)
+                return permissionDenied ? .permissionDenied : .delivered
+            }, cancelNotification: { [self] in cancelled.append($0) }, history: { [self] in history.append($0) }, clock: { [self] in now })
+    }
+    func controller() -> DriveVerificationController { DriveVerificationController(settingsURL: settingsURL, environment: environment) }
+    func bind(_ controller: DriveVerificationController) async throws {
+        await controller.start()
+        try await controller.selectFolder(databaseID: id, accountID: (await server.accounts())[0].id, input: "root")
+        try await settle(controller)
+    }
+    func matching() throws -> UploadRemoteFile {
+        try UploadRemoteFile(id: "remote-fixture", size: fingerprint.size, sha256: fingerprint.sha256)
+    }
+    func settle(_ controller: DriveVerificationController) async throws {
+        for _ in 0..<100 { await Task.yield() }
+        for _ in 0..<10_000 {
+            if !controller.isChecking { return }
+            await Task.yield()
+        }
+        Issue.record("Drive check did not settle")
+        throw UploadVerificationFailure.providerUnavailable
+    }
+    func awaitQuery() async throws {
+        for _ in 0..<10_000 {
+            if await server.suspended != nil { return }
+            await Task.yield()
+        }
+        Issue.record("Simulated query did not start")
+        throw UploadVerificationFailure.providerUnavailable
+    }
+    func awaitFolder() async throws {
+        for _ in 0..<10_000 {
+            if await server.folderSuspended != nil { return }
+            await Task.yield()
+        }
+        Issue.record("Simulated folder resolution did not start")
+        throw UploadVerificationFailure.providerUnavailable
+    }
+    func remove() { try! FileManager.default.removeItem(at: root) }
+}
+
+@MainActor
+struct DriveVerificationControllerTests {
+    @Test func unavailableAndDemoHaveNoExternalOrPersistenceEffects() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        let unavailable = DriveVerificationController(settingsURL: fixture.settingsURL, environment: nil)
+        unavailable.connect()
+        #expect(unavailable.failure == .unavailable)
+        #expect(!unavailable.isAvailable)
+        let demo = DriveVerificationController(settingsURL: fixture.settingsURL, environment: fixture.environment, demo: true)
+        await demo.start()
+        demo.requestCheck()
+        demo.connect()
+        demo.localCopiesChanged()
+        #expect(await demo.quiesceAndPersist())
+        #expect(!demo.isAvailable)
+        #expect(await fixture.server.calls == 0)
+        #expect(!FileManager.default.fileExists(atPath: fixture.settingsURL.path))
+    }
+
+    @Test func resolvedFolderAndPrivateSettingsContainNoCredentials() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        let controller = fixture.controller()
+        await controller.start()
+        await #expect(throws: DriveControllerFailure.folderUnavailable) {
+            try await controller.selectFolder(databaseID: fixture.id, accountID: (await fixture.server.accounts())[0].id, input: "https://untrusted.invalid/folder")
+        }
+        #expect(controller.bindings.isEmpty)
+        try await fixture.bind(controller)
+        #expect(controller.bindings[fixture.id]?.folderID == "resolved-root")
+        #expect(controller.preferences == DriveNotificationPreferences())
+        #expect(controller.results[fixture.id]?.status == .pending)
+        let attributes = try FileManager.default.attributesOfItem(atPath: fixture.settingsURL.path)
+        #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+        let text = try String(contentsOf: fixture.settingsURL, encoding: .utf8)
+        #expect(!text.contains("accessToken"))
+        #expect(!text.contains("refreshToken"))
+        #expect(!text.contains("clientSecret"))
+    }
+
+    @Test func errorsNeverDisplayHistoricalConfirmationAndDeduplicateAcrossRestart() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        await fixture.server.set(remote: try fixture.matching())
+        var controller = fixture.controller()
+        try await fixture.bind(controller)
+        #expect(controller.results[fixture.id]?.status == .confirmed)
+        #expect(fixture.delivered.isEmpty)
+        await fixture.server.set(remote: nil, problem: .accessDenied)
+        fixture.now += 60
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(controller.results[fixture.id]?.status == .error(.accessDenied))
+        #expect(controller.results[fixture.id]?.lastConfirmedAt == 100)
+        #expect(fixture.delivered.map(\.kind) == [.error])
+        fixture.fingerprint = try UploadLocalFingerprint(size: 13, sha256: String(repeating: "c", count: 64), md5: String(repeating: "d", count: 32))
+        controller.localCopiesChanged()
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(fixture.delivered.map(\.kind) == [.error])
+        #expect(controller.results[fixture.id]?.lastConfirmedAt == nil)
+        controller = fixture.controller()
+        await controller.start()
+        fixture.now += 60
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(fixture.delivered.map(\.kind) == [.error])
+        await fixture.server.set(remote: nil)
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(fixture.delivered.map(\.kind) == [.error, .recovery])
+        #expect(fixture.delivered.last?.confirmed == false)
+    }
+
+    @Test func overdueCountsSuccessfulIntervalsAndDoesNotRepeat() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        let controller = fixture.controller()
+        try await fixture.bind(controller)
+        for timestamp: UInt64 in [1000, 1900, 2800] {
+            fixture.now = timestamp
+            controller.requestCheck()
+            try await fixture.settle(controller)
+        }
+        #expect(controller.results[fixture.id]?.status == .overdue)
+        #expect(fixture.delivered.map(\.kind) == [.overdue])
+        await fixture.server.set(remote: nil, problem: .providerUnavailable)
+        fixture.now = 3700
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        await fixture.server.set(remote: nil)
+        fixture.now = 100_000
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(controller.results[fixture.id]?.pendingSeconds == 2700)
+        #expect(fixture.delivered.map(\.kind) == [.overdue, .error, .recovery])
+    }
+
+    @Test func newContentPublishesPendingAndDiscardsOlderNetworkResult() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        await fixture.server.set(remote: try fixture.matching())
+        let controller = fixture.controller()
+        try await fixture.bind(controller)
+        await fixture.server.setBlocked(true)
+        controller.requestCheck()
+        try await fixture.awaitQuery()
+        fixture.fingerprint = try UploadLocalFingerprint(size: 14, sha256: String(repeating: "c", count: 64), md5: String(repeating: "d", count: 32))
+        controller.localCopiesChanged()
+        #expect(controller.results.isEmpty)
+        controller.requestCheck()
+        await fixture.server.release()
+        await fixture.server.set(remote: nil)
+        try await fixture.settle(controller)
+        #expect(controller.results[fixture.id]?.status == .pending)
+        #expect(controller.results[fixture.id]?.localSHA256 == fixture.fingerprint.sha256)
+        #expect(controller.results[fixture.id]?.lastConfirmedAt == nil)
+        fixture.localEnabled = false
+        controller.localCopiesChanged()
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(controller.results.isEmpty)
+    }
+
+    @Test func deliveryFailureRetriesButPermissionDenialDoesNotReplay() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        fixture.deliveryFails = true
+        await fixture.server.set(remote: nil, problem: .accessDenied)
+        var controller = fixture.controller()
+        try await fixture.bind(controller)
+        #expect(fixture.history.map(\.kind) == [.error])
+        #expect(fixture.delivered.isEmpty)
+        controller.localCopiesChanged()
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(fixture.history.map(\.kind) == [.error])
+        controller = fixture.controller()
+        await controller.start()
+        fixture.deliveryFails = false
+        fixture.permissionDenied = true
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(fixture.delivered.count == 1)
+        fixture.permissionDenied = false
+        controller = fixture.controller()
+        await controller.start()
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(fixture.delivered.count == 1)
+        #expect(fixture.history.count == 1)
+    }
+
+    @Test func localValidationAndCredentialRotationCannotConfirmStaleCopies() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        await fixture.server.set(remote: try fixture.matching())
+        fixture.validationFileFailure = .changedFile
+        let controller = fixture.controller()
+        try await fixture.bind(controller)
+        #expect(controller.results[fixture.id]?.status == .error(.localFileChanged))
+        fixture.validationFileFailure = nil
+        await fixture.server.rotate()
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(controller.results[fixture.id]?.status == .confirmed)
+        #expect(controller.results[fixture.id]?.context?.accountID.hasSuffix((await fixture.server.accounts())[0].credentialID.uuidString) == true)
+        #expect(fixture.delivered.map(\.kind) == [.error])
+    }
+
+    @Test func preferencesAreIndependentAndFailedSettingsCannotEmitEvents() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        let controller = fixture.controller()
+        var preferences = DriveNotificationPreferences()
+        preferences.errors = false
+        preferences.confirmed = true
+        try controller.setPreferences(preferences)
+        await fixture.server.set(remote: try fixture.matching())
+        try await fixture.bind(controller)
+        #expect(fixture.delivered.map(\.kind) == [.confirmed])
+        await fixture.server.set(remote: nil, problem: .accessDenied)
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(fixture.delivered.map(\.kind) == [.confirmed])
+        let brokenURL = fixture.root.appendingPathComponent("directory-instead-of-file")
+        try FileManager.default.createDirectory(at: brokenURL, withIntermediateDirectories: false)
+        let broken = DriveVerificationController(settingsURL: brokenURL, environment: fixture.environment)
+        await broken.start()
+        await #expect(throws: DriveControllerFailure.settingsUnavailable) {
+            try await broken.selectFolder(databaseID: fixture.id, accountID: (await fixture.server.accounts())[0].id, input: "root")
+        }
+        #expect(broken.bindings.isEmpty)
+        #expect(fixture.delivered.map(\.kind) == [.confirmed])
+    }
+
+    @Test func disableCancelsPersistedAlertsAndQuiesceCanResume() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        fixture.deliveryFails = true
+        await fixture.server.set(remote: nil, problem: .providerUnavailable)
+        let controller = fixture.controller()
+        try await fixture.bind(controller)
+        #expect(fixture.history.count == 1)
+        try controller.disable(databaseID: fixture.id)
+        #expect(!fixture.cancelled.isEmpty)
+        #expect(controller.results.isEmpty)
+        #expect(await controller.quiesceAndPersist())
+        controller.resume()
+        controller.resume()
+        try await fixture.settle(controller)
+        fixture.deliveryFails = false
+        let restarted = fixture.controller()
+        await restarted.start()
+        restarted.requestCheck()
+        try await fixture.settle(restarted)
+        #expect(fixture.delivered.isEmpty)
+    }
+
+    @Test func pendingIsPublishedBeforeQueryAndRequestsCoalesce() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        let controller = fixture.controller()
+        await fixture.server.setBlocked(true)
+        await controller.start()
+        try await controller.selectFolder(databaseID: fixture.id, accountID: (await fixture.server.accounts())[0].id, input: "root")
+        try await fixture.awaitQuery()
+        #expect(controller.results[fixture.id]?.status == .pending)
+        #expect(controller.results[fixture.id]?.localSHA256 == fixture.fingerprint.sha256)
+        for _ in 0..<30 { controller.requestCheck() }
+        await fixture.server.release()
+        try await fixture.settle(controller)
+        #expect(await fixture.server.calls == 2)
+    }
+
+    @Test func folderResolutionCannotCommitAfterAccountCredentialRotation() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        let controller = fixture.controller()
+        await controller.start()
+        let accountID = (await fixture.server.accounts())[0].id
+        await fixture.server.blockFolder()
+        let selection = Task {
+            try await controller.selectFolder(databaseID: fixture.id, accountID: accountID, input: "root")
+        }
+        try await fixture.awaitFolder()
+        await fixture.server.rotate()
+        await fixture.server.releaseFolder()
+        await #expect(throws: DriveControllerFailure.accountUnavailable) { try await selection.value }
+        #expect(controller.bindings.isEmpty)
+        #expect(await fixture.server.calls == 0)
+    }
+
+    @Test func corruptionResetsOnceWithoutRestoringAnOldConfirmation() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        try Data("{\"version\":999}".utf8).write(to: fixture.settingsURL)
+        let controller = fixture.controller()
+        #expect(controller.failure == .invalidSavedState)
+        #expect(controller.results.isEmpty)
+        let restarted = fixture.controller()
+        #expect(restarted.failure == nil)
+        #expect(restarted.bindings.isEmpty)
+    }
+
+    @Test func cancelledConnectionDoesNotPublishAndDisconnectIsLocal() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        let controller = fixture.controller()
+        await fixture.server.blockConnection()
+        controller.connect()
+        for _ in 0..<10_000 {
+            if await fixture.server.connectionSuspended != nil { break }
+            await Task.yield()
+        }
+        #expect(await fixture.server.connectionSuspended != nil)
+        controller.cancelConnect()
+        await fixture.server.releaseConnection()
+        for _ in 0..<100 { await Task.yield() }
+        #expect(!controller.isConnecting)
+        #expect(controller.accounts.isEmpty)
+        #expect(await fixture.server.connectionCancellations == 1)
+        try await fixture.bind(controller)
+        let calls = await fixture.server.calls
+        try await controller.disconnect(accountID: controller.accounts[0].id)
+        #expect(controller.accounts.isEmpty)
+        #expect(controller.bindings.isEmpty)
+        #expect(controller.results.isEmpty)
+        #expect(await fixture.server.disconnects == 1)
+        #expect(await fixture.server.calls == calls)
+        #expect(DriveVerificationController.permissionURL.absoluteString == "https://myaccount.google.com/connections")
+    }
+
+    @Test func catalogAndSnapshotFailuresReplaceCurrentConfirmation() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        await fixture.server.set(remote: try fixture.matching())
+        let controller = fixture.controller()
+        try await fixture.bind(controller)
+        fixture.catalogFailure = .invalidConfiguration
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(controller.results[fixture.id]?.status == .error(.invalidConfiguration))
+        fixture.catalogFailure = nil
+        fixture.localFailure = .localFileUnavailable
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(controller.results[fixture.id]?.status == .error(.localFileUnavailable))
+        #expect(controller.results[fixture.id]?.lastConfirmedAt == 100)
+    }
+
+    @Test func olderQuiesceCannotPersistAfterResumeAndAnotherShutdown() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        let controller = fixture.controller()
+        try await fixture.bind(controller)
+        await fixture.server.setBlocked(true)
+        controller.requestCheck()
+        try await fixture.awaitQuery()
+        var firstStarted = false
+        let first = Task { firstStarted = true; return await controller.quiesceAndPersist() }
+        for _ in 0..<10_000 {
+            if firstStarted { break }
+            await Task.yield()
+        }
+        #expect(firstStarted)
+        controller.resume()
+        var secondStarted = false
+        let second = Task { secondStarted = true; return await controller.quiesceAndPersist() }
+        for _ in 0..<10_000 {
+            if secondStarted { break }
+            await Task.yield()
+        }
+        #expect(secondStarted)
+        await fixture.server.release()
+        #expect(await first.value == false)
+        #expect(await second.value == true)
+        #expect(!controller.isChecking)
+    }
+}
