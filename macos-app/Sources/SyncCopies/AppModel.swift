@@ -371,7 +371,7 @@ final class AppModel: ObservableObject {
         loginNeedsApproval = login.needsApproval
     }
 
-    private func save() -> Bool {
+    private func save(durable: Bool = false) -> Bool {
         if isDemo { return true }
         guard !loadFailed else { return false }
         preferences.history = Array(preferences.history.prefix(200))
@@ -380,12 +380,43 @@ final class AppModel: ObservableObject {
             let data = try JSONEncoder().encode(preferences)
             try data.write(to: preferencesURL, options: .atomic)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: preferencesURL.path)
+            if durable { try synchronizeSettings() }
             persistenceFailed = false
             return true
         } catch {
             persistenceFailed = true
             problem = L10n.format("Settings could not be saved. %@", LocalizedMessage.from(error).rendered())
             return false
+        }
+    }
+
+    /// Quiesce copies without releasing the instance lock or folder grants. A
+    /// failed durable save cancels installation and restores normal scheduling.
+    func prepareForUpdate() async -> Bool {
+        if isDemo { return false }
+        isStopping = true
+        environment?.scheduler.stop()
+        monitor?.stop()
+        scanAgain = false
+        await scanTask?.value
+        guard save(durable: true) else {
+            isStopping = false
+            environment?.scheduler.start { [weak self] in self?.refresh() }
+            armMonitor()
+            return false
+        }
+        return true
+    }
+
+    private func synchronizeSettings() throws {
+        for (url, flags) in [(preferencesURL, O_RDONLY), (preferencesURL.deletingLastPathComponent(), O_RDONLY | O_DIRECTORY)] {
+            let descriptor = open(url.path, flags | O_NOFOLLOW | O_CLOEXEC)
+            guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            defer { _ = close(descriptor) }
+            while fsync(descriptor) != 0 {
+                if errno == EINTR { continue }
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
         }
     }
 

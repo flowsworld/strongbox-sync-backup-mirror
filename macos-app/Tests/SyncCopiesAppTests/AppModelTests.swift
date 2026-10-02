@@ -156,6 +156,40 @@ struct AppModelTests {
         await model.shutdown()
     }
 
+    @Test func updatePreparationPreservesSettingsAndCopies() async throws {
+        let fixture = try ModelFixture()
+        let model = AppModel(environment: fixture.environment())
+        try await settled(model)
+        #expect(await model.prepareForUpdate())
+        #expect(model.isStopping)
+        let saved = try JSONDecoder().decode(Preferences.self, from: Data(contentsOf: fixture.preferencesURL))
+        #expect(saved.source == Data("source".utf8))
+        #expect(saved.defaultTarget == Data("common".utf8))
+        #expect(saved.databases[fixture.first.id.uuidString]?.lastCopied != nil)
+        #expect(!saved.history.isEmpty)
+        #expect(try Data(contentsOf: fixture.common.appendingPathComponent(fixture.first.filename)) == Data("first encrypted fixture".utf8))
+        await model.shutdown()
+    }
+
+    @Test func failedUpdateSaveLeavesModelUsableAndCopiesIntact() async throws {
+        let fixture = try ModelFixture()
+        let model = AppModel(environment: fixture.environment())
+        try await settled(model)
+        let settingsDirectory = fixture.preferencesURL.deletingLastPathComponent()
+        try FileManager.default.removeItem(at: settingsDirectory)
+        try Data("blocked settings directory".utf8).write(to: settingsDirectory)
+        #expect(!(await model.prepareForUpdate()))
+        #expect(!model.isStopping)
+        #expect(model.problem != nil)
+        #expect(try Data(contentsOf: fixture.common.appendingPathComponent(fixture.first.filename)) == Data("first encrypted fixture".utf8))
+        try FileManager.default.removeItem(at: settingsDirectory)
+        model.refresh()
+        try await settled(model)
+        #expect(model.problem == nil)
+        #expect(try JSONDecoder().decode(Preferences.self, from: Data(contentsOf: fixture.preferencesURL)).source == Data("source".utf8))
+        await model.shutdown()
+    }
+
     private func settled(_ model: AppModel) async throws {
         for _ in 0..<400 {
             if !model.isChecking { return }
