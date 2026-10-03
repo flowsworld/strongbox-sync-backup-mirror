@@ -405,6 +405,7 @@ final class DriveVerificationController: ObservableObject {
             if current != accounts { accounts = current }
             cleanupPending = pending
             inputs = try environment.localInputs()
+            if failure == .accountUnavailable { failure = nil }
         } catch {
             guard captured == generation, !Task.isCancelled else { return }
             for id in settings.bindings.keys {

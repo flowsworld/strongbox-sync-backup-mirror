@@ -20,7 +20,13 @@ private actor DriveServerFixture {
     var disconnects = 0
     var connected = true
     var cleanupPending = false
+    var listingFails = false
 
+    func setListingFailure(_ fails: Bool) { listingFails = fails }
+    func list() throws -> [GoogleDriveAccount] {
+        if listingFails { throw GoogleDriveAccountFailure.credentialsUnavailable }
+        return accounts()
+    }
     func accounts() -> [GoogleDriveAccount] { connected ? (listed.isEmpty ? [account] : listed) : [] }
     func connect() async -> GoogleDriveAccount {
         if connectionBlocked { await withCheckedContinuation { connectionSuspended = $0 } }
@@ -125,7 +131,7 @@ private final class DriveControllerFixture {
         let cleanupGate = accountCleanupGate
         return DriveVerificationEnvironment(listAccounts: {
             if let cleanupGate { await cleanupGate.wait() }
-            return await server.accounts()
+            return try await server.list()
         }, connect: { await server.connect() },
             cancelConnect: { await server.cancelConnection() }, disconnect: { _ in await server.disconnect() }, resolveFolder: { _, id in try await server.folder(id) },
             remoteFile: { _, _, _ in try await server.query() }, localInputs: { [self] in
@@ -215,6 +221,26 @@ struct DriveVerificationControllerTests {
         await stoppedLoad.value
         #expect(await shutdown.value)
         #expect(controller.accounts.isEmpty)
+        #expect(controller.failure == nil)
+    }
+
+    @Test func successfulCompleteRefreshClearsAnEarlierAccountFailureWithoutBindings() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        let controller = fixture.controller()
+        await fixture.server.setListingFailure(true)
+        await controller.start()
+        #expect(controller.failure == .accountUnavailable)
+        await fixture.server.setListingFailure(false)
+        fixture.catalogFailure = .localFileUnavailable
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(controller.failure == .accountUnavailable)
+        fixture.catalogFailure = nil
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(controller.accounts == (await fixture.server.accounts()))
+        #expect(controller.bindings.isEmpty)
         #expect(controller.failure == nil)
     }
 
