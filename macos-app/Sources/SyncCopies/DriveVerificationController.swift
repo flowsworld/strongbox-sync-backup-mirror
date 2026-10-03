@@ -603,7 +603,8 @@ final class DriveVerificationController: ObservableObject {
         do { if !demo { try Self.save(next, to: settingsURL) } }
         catch { failure = .settingsUnavailable; throw DriveControllerFailure.settingsUnavailable }
         settings = next
-        failure = nil
+        // Saving check results does not recover a failed sign-in or account load.
+        if failure != .connectionFailed, failure != .accountUnavailable { failure = nil }
         publish()
     }
 

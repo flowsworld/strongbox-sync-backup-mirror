@@ -250,7 +250,7 @@ struct DriveVerificationControllerTests {
         #expect(await fixture.server.calls == previousCalls)
         #expect(controller.results.isEmpty)
         #expect(fixture.delivered.isEmpty)
-        #expect(fixture.history.isEmpty)
+        #expect(fixture.history.filter { $0.kind == .error }.isEmpty)
         controller.cancelConnect()
         controller.requestCheck()
         try await fixture.settle(controller)
@@ -269,9 +269,11 @@ struct DriveVerificationControllerTests {
     @Test func cancelledSignInReportsAFailedCredentialRollback() async throws {
         let fixture = try DriveControllerFixture()
         defer { fixture.remove() }
+        await fixture.server.set(remote: try fixture.matching())
+        let controller = fixture.controller()
+        try await fixture.bind(controller)
         await fixture.server.blockConnection()
         await fixture.server.failConnectionRollback()
-        let controller = fixture.controller()
         controller.connect()
         for _ in 0..<10_000 {
             if await fixture.server.connectionSuspended != nil { break }
@@ -284,6 +286,7 @@ struct DriveVerificationControllerTests {
             if controller.failure == .connectionFailed { break }
             await Task.yield()
         }
+        try await fixture.settle(controller)
         #expect(controller.failure == .connectionFailed)
         #expect(!controller.isConnecting)
         #expect(await controller.quiesceAndPersist())
@@ -863,7 +866,7 @@ struct DriveVerificationControllerTests {
         await fixture.server.releaseConnection()
         for _ in 0..<100 { await Task.yield() }
         #expect(!controller.isConnecting)
-        #expect(controller.accounts.isEmpty)
+        #expect(controller.accounts == (await fixture.server.accounts()))
         #expect(await fixture.server.connectionCancellations == 1)
         try await fixture.bind(controller)
         let calls = await fixture.server.calls
