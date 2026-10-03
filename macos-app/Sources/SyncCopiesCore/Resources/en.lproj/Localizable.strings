@@ -358,3 +358,5 @@
 "Some previous Google credentials could not be removed. Retry when Keychain is available." = "Some previous Google credentials could not be removed. Retry when Keychain is available.";
 
 "Retry credential cleanup" = "Retry credential cleanup";
+
+"Cancel" = "Cancel";

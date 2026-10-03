@@ -110,6 +110,10 @@ including after restart; re-enabled bindings resume normal error reporting.
 Each verified defect has a focused regression test. The last local full Codex
 run was interrupted by its usage limit and is not counted as completed. GitHub
 Codex reviews are requested only after current CI passes.
+The final localization-only followup adds the missing English/German Cancel
+entry. Both catalogs pass plist validation and contain all 146 literal UI
+localization keys; all seven localization tests pass. Independent reviews were
+not repeated for that trivial resource correction.
 Greptile and Bugbot remain disabled.
 
 ## Remaining coverage

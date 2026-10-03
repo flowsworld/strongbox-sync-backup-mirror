@@ -358,3 +358,5 @@
 "Some previous Google credentials could not be removed. Retry when Keychain is available." = "Einige frühere Google-Zugangsdaten konnten nicht entfernt werden. Versuche es erneut, sobald der Schlüsselbund verfügbar ist.";
 
 "Retry credential cleanup" = "Zugangsdaten erneut bereinigen";
+
+"Cancel" = "Abbrechen";
