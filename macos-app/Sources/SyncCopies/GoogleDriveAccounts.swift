@@ -209,6 +209,7 @@ actor GoogleDriveAccounts {
         mutationActive = true
         defer { mutationActive = false }
         var registry = try loadRegistry()
+        let original = registry
         let previous = registry.accounts.first { $0.drivePermissionID == identity.drivePermissionID }
         let account = GoogleDriveAccount(identity: identity, credentialID: UUID())
         let payload = StoredCredentials(clientID: client.clientID, drivePermissionID: identity.drivePermissionID, refreshToken: tokens.refreshToken)
@@ -216,29 +217,60 @@ actor GoogleDriveAccounts {
         try saveRegistry(registry)
         // Persist the journal's rename before a secret can exist outside the registry.
         try syncRegistryDirectory()
+        var previousCredential: Data?
+        var committed = false
         do {
             try await credentials.add(account.credentialID, JSONEncoder().encode(payload))
             try Task.checkCancellation()
-            var committed = registry
-            committed.accounts.removeAll { $0.id == account.id }
-            committed.accounts.append(account)
-            committed.pendingRemovals.removeAll { $0 == account.credentialID }
-            if let previous { committed.pendingRemovals.append(previous.credentialID) }
-            try saveRegistry(committed)
-            registry = committed
-        } catch {
-            do {
-                try await credentials.remove(account.credentialID)
-                registry.pendingRemovals.removeAll { $0 == account.credentialID }
-                try saveRegistry(registry)
+            if let previous {
+                do { previousCredential = try await credentials.read(previous.credentialID) }
+                catch GoogleDriveAccountFailure.credentialsMissing { /* Reconnect can repair an already missing credential. */ }
             }
+            try Task.checkCancellation()
+            var updated = registry
+            updated.accounts.removeAll { $0.id == account.id }
+            updated.accounts.append(account)
+            updated.pendingRemovals.removeAll { $0 == account.credentialID }
+            if let previous { updated.pendingRemovals.append(previous.credentialID) }
+            try saveRegistry(updated)
+            registry = updated
+            committed = true
+            if let previous { refreshes.removeValue(forKey: previous.credentialID)?.task.cancel() }
+            let cleanupPending = await cleanup(&registry)
+            try Task.checkCancellation()
+            cachedTokens[account.id] = tokens
+            return GoogleDriveAccountSave(account: account, cleanupPending: cleanupPending)
+        } catch {
+            // Drain rollback in an owned, uncancelled task. The caller may have
+            // cancelled while Keychain deletion was already in progress.
+            let retainedCredential = committed ? previousCredential : nil
+            let rollback = Task {
+                try await self.rollbackSave(account: account, previous: previous,
+                                            previousCredential: retainedCredential, original: original)
+            }
+            do { try await rollback.value }
             catch { throw GoogleDriveAccountFailure.rollbackFailed }
             throw error
         }
-        cachedTokens[account.id] = tokens
-        if let previous { refreshes.removeValue(forKey: previous.credentialID)?.task.cancel() }
-        let cleanupPending = await cleanup(&registry)
-        return GoogleDriveAccountSave(account: account, cleanupPending: cleanupPending)
+    }
+
+    private func rollbackSave(account: GoogleDriveAccount, previous: GoogleDriveAccount?,
+                              previousCredential: Data?, original: Registry) async throws {
+        if let previous, let previousCredential {
+            do { _ = try await credentials.read(previous.credentialID) }
+            catch GoogleDriveAccountFailure.credentialsMissing {
+                try await credentials.add(previous.credentialID, previousCredential)
+            }
+        }
+        var restored = original
+        restored.pendingRemovals.append(account.credentialID)
+        try saveRegistry(restored)
+        // The restored registry must be durable before deleting the replacement.
+        // Failed restoration or removal leaves both credentials safely journaled.
+        try syncRegistryDirectory()
+        try await credentials.remove(account.credentialID)
+        restored.pendingRemovals.removeAll { $0 == account.credentialID }
+        try saveRegistry(restored)
     }
 
     /// Local disconnect works offline. Google grant revocation is a separate explicit choice.

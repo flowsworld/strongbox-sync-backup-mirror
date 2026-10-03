@@ -324,6 +324,108 @@ final class GoogleDriveAccountsTests: XCTestCase {
         XCTAssertEqual(Set(credentials.keys), [previous.account.credentialID])
     }
 
+    func testCancellationDuringReconnectCleanupRestoresPreviousAccountAndCredential() async throws {
+        for honorsCancellation in [false, true] {
+            let directory = try directory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let keychain = DriveCredentialFixture()
+            let registry = directory.appendingPathComponent("accounts.json")
+            let transport = DriveHTTPFixture(outcomes: []).transport
+            let accounts = GoogleDriveAccounts(registryURL: registry, client: try client(), credentials: keychain.store,
+                                              transport: transport, clock: { 0 })
+            let previous = try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111", displayName: "Previous"), tokens: tokens())
+            let previousCredentials = await keychain.snapshot()
+            await keychain.honorCancellation(honorsCancellation)
+            await keychain.suspendNextRemoval()
+            let reconnect = Task {
+                try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111", displayName: "Replacement"), tokens: tokens(refresh: "replacement"))
+            }
+            let deadline = Date().addingTimeInterval(2)
+            while !(await keychain.isRemovalSuspended), Date() < deadline { try await Task.sleep(for: .milliseconds(1)) }
+            let suspended = await keychain.isRemovalSuspended
+            XCTAssertTrue(suspended)
+            do {
+                _ = try await accounts.disconnect(accountID: previous.account.id)
+                XCTFail("Reconnect cleanup lost exclusive registry ownership")
+            } catch { XCTAssertEqual(error as? GoogleDriveAccountFailure, .busy) }
+            reconnect.cancel()
+            await keychain.releaseRemoval()
+            do { _ = try await reconnect.value; XCTFail("Cancelled reconnect committed") }
+            catch { XCTAssertTrue(error is CancellationError) }
+            let active = try await accounts.list()
+            XCTAssertEqual(active, [previous.account])
+            let credentials = await keychain.snapshot()
+            XCTAssertEqual(credentials, previousCredentials)
+            let pending = try await accounts.hasPendingCleanup()
+            XCTAssertFalse(pending)
+            let reopened = GoogleDriveAccounts(registryURL: registry, client: try client(), credentials: keychain.store,
+                                               transport: transport, clock: { 0 })
+            let persisted = try await reopened.list()
+            XCTAssertEqual(persisted, [previous.account])
+            let cachedToken = try await accounts.accessToken(accountID: previous.account.id)
+            XCTAssertEqual(cachedToken, "private-access")
+        }
+    }
+
+    func testCancelledReconnectRetainsReplacementUntilRollbackRegistryIsDurable() async throws {
+        let directory = try directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let keychain = DriveCredentialFixture()
+        let sync = RegistryDirectorySyncFixture()
+        let registry = directory.appendingPathComponent("accounts.json")
+        let transport = DriveHTTPFixture(outcomes: []).transport
+        let accounts = GoogleDriveAccounts(registryURL: registry, client: try client(), credentials: keychain.store,
+                                          transport: transport, synchronizeDirectory: { try sync.synchronize($0) })
+        let previous = try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111"), tokens: tokens())
+        let previousSnapshot = await keychain.snapshot()
+        let previousCredential = try XCTUnwrap(previousSnapshot[previous.account.credentialID])
+        // The staged journal and replacement commit are durable. Rollback's
+        // directory sync fails after the old credential has been deleted.
+        sync.failAfter(successes: 2)
+        await keychain.suspendNextRemoval()
+        let reconnect = Task { try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111"), tokens: tokens(refresh: "replacement")) }
+        let deadline = Date().addingTimeInterval(2)
+        while !(await keychain.isRemovalSuspended), Date() < deadline { try await Task.sleep(for: .milliseconds(1)) }
+        let suspended = await keychain.isRemovalSuspended
+        XCTAssertTrue(suspended)
+        reconnect.cancel()
+        await keychain.releaseRemoval()
+        do { _ = try await reconnect.value; XCTFail("Expected deferred rollback cleanup") }
+        catch { XCTAssertEqual(error as? GoogleDriveAccountFailure, .rollbackFailed) }
+        let retained = await keychain.snapshot()
+        XCTAssertEqual(retained.count, 2)
+        XCTAssertEqual(retained[previous.account.credentialID], previousCredential)
+        let pending = try await accounts.hasPendingCleanup()
+        XCTAssertTrue(pending)
+        let reopened = GoogleDriveAccounts(registryURL: registry, client: try client(), credentials: keychain.store,
+                                           transport: transport, synchronizeDirectory: { try sync.synchronize($0) })
+        let active = try await reopened.list()
+        XCTAssertEqual(active, [previous.account])
+        let stillRetained = await keychain.snapshot()
+        XCTAssertEqual(stillRetained, retained)
+        sync.allow()
+        let cleaned = try await reopened.list()
+        XCTAssertEqual(cleaned, [previous.account])
+        let remaining = await keychain.snapshot()
+        XCTAssertEqual(remaining, [previous.account.credentialID: previousCredential])
+    }
+
+    func testReconnectRepairsAnAlreadyMissingCredential() async throws {
+        let directory = try directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let keychain = DriveCredentialFixture()
+        let accounts = GoogleDriveAccounts(registryURL: directory.appendingPathComponent("accounts.json"), client: try client(),
+                                          credentials: keychain.store, transport: DriveHTTPFixture(outcomes: []).transport)
+        let previous = try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111"), tokens: tokens())
+        try await keychain.remove(previous.account.credentialID)
+        let repaired = try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111"), tokens: tokens(refresh: "replacement"))
+        XCTAssertEqual(repaired.account.id, previous.account.id)
+        let active = try await accounts.list()
+        XCTAssertEqual(active, [repaired.account])
+        let remaining = await keychain.snapshot()
+        XCTAssertEqual(Set(remaining.keys), [repaired.account.credentialID])
+    }
+
     func testEveryRemoteLookupResolvesFolderAndSearchesByNameAgain() async throws {
         let directory = try directory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -417,6 +519,7 @@ private actor DriveSuspendedHTTPFixture {
 
 actor DriveCredentialFixture {
     private var values: [UUID: Data] = [:]
+    private var honorsCancellation = false
     private var removalFails = false
     private var addAfterWriteFails = false
     private var shouldSuspendAdd = false
@@ -439,6 +542,7 @@ actor DriveCredentialFixture {
             shouldSuspendAdd = false
             await withCheckedContinuation { addContinuation = $0 }
         }
+        if honorsCancellation { try Task.checkCancellation() }
         if addAfterWriteFails { throw GoogleDriveAccountFailure.credentialsUnavailable }
     }
     func update(_ id: UUID, data: Data) throws {
@@ -450,9 +554,11 @@ actor DriveCredentialFixture {
             shouldSuspendRemoval = false
             await withCheckedContinuation { removalContinuation = $0 }
         }
+        if honorsCancellation { try Task.checkCancellation() }
         if removalFails { throw GoogleDriveAccountFailure.credentialsUnavailable }
         values.removeValue(forKey: id)
     }
+    func honorCancellation(_ honor: Bool) { honorsCancellation = honor }
     func failRemoval(_ fail: Bool) { removalFails = fail }
     func failAddAfterWrite(_ fail: Bool) { addAfterWriteFails = fail }
     func suspendNextAdd() { shouldSuspendAdd = true }
