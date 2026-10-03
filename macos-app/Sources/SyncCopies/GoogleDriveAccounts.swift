@@ -259,6 +259,14 @@ actor GoogleDriveAccounts {
         if let previous, let previousCredential {
             do { _ = try await credentials.read(previous.credentialID) }
             catch GoogleDriveAccountFailure.credentialsMissing {
+                // Restoration can itself fail after adding a secret. Journal it
+                // before writing so a failed rollback cannot orphan credentials.
+                var journal = try loadRegistry()
+                if !journal.pendingRemovals.contains(previous.credentialID) {
+                    journal.pendingRemovals.append(previous.credentialID)
+                    try saveRegistry(journal)
+                }
+                try syncRegistryDirectory()
                 try await credentials.add(previous.credentialID, previousCredential)
             }
         }

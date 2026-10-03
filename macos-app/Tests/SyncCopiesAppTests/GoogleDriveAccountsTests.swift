@@ -379,9 +379,9 @@ final class GoogleDriveAccountsTests: XCTestCase {
         let previous = try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111"), tokens: tokens())
         let previousSnapshot = await keychain.snapshot()
         let previousCredential = try XCTUnwrap(previousSnapshot[previous.account.credentialID])
-        // The staged journal and replacement commit are durable. Rollback's
-        // directory sync fails after the old credential has been deleted.
-        sync.failAfter(successes: 2)
+        // Staging, replacement commit, and the old credential's restoration
+        // journal are durable. Syncing the restored account registry fails.
+        sync.failAfter(successes: 3)
         await keychain.suspendNextRemoval()
         let reconnect = Task { try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111"), tokens: tokens(refresh: "replacement")) }
         let deadline = Date().addingTimeInterval(2)
