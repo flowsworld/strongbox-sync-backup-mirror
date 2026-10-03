@@ -13,8 +13,8 @@ Sparkle 2.10.0. Development and Store builds exclude Sparkle and its helpers.
 
 ## Automated and packaging results
 
-At source revision `d2118e7`, all 212 Swift test functions passed: 89 core
-Swift Testing tests, 94 app Swift Testing tests and 29 XCTest tests. All 116
+At source revision `5c11751`, all 222 Swift test functions passed: 89 core
+Swift Testing tests, 98 app Swift Testing tests and 35 XCTest tests. All 116
 Python tests passed. Shell syntax checks passed for repository scripts, and
 Bash syntax plus ShellCheck passed for the prepared local Google wizard.
 
@@ -27,7 +27,7 @@ Bash syntax plus ShellCheck passed for the prepared local Google wizard.
 | Detached launch | English, German and French fallback demo processes remained running without `.build` resources |
 | Store fixture at `8b746fa` | Universal build passed; no Sparkle linkage/framework, SU settings or updater Mach entitlement; signature verified |
 | Direct fixture at `8b746fa` | Universal build with synthetic client/feed passed; exact Sparkle 2.10.0, nested helper signatures verified, Downloader excluded, profile reporting off |
-| Direct compilation | Swift 6 typechecks passed at `d2118e7` for arm64 and x86_64 at macOS 13 with Sparkle 2.10.0 |
+| Direct compilation | Swift 6 typechecks passed at `5c11751` for arm64 and x86_64 at macOS 13 with Sparkle 2.10.0 |
 | Privacy manifest | Embedded file timestamp and elapsed-time declarations validated; no tracking or developer-collected data declared |
 
 The direct fixture used an official archive whose SHA-256 matched the pinned
@@ -94,7 +94,16 @@ concurrent disconnects and cancellation isolation for shared token refreshes.
 Cancelled refresh callers drain the bounded shared request;
 only account ownership changes cancel that worker. A rejected concurrent
 disconnect preserves bindings. Checks skip accounts awaiting disconnect cleanup
-and resume after either success or failure.
+and resume after either success or failure. Cancelled reconnects restore the
+previous credential and account, journaling restoration before any Keychain
+write. Rollback failures remain visible after cancellation. A reconnect drains
+the prior shared refresh worker before capturing its rollback credential; that
+worker owns rotation through the final write. Waiters do not write credentials.
+A successful complete account/local-input refresh clears a recovered warning.
+Cloud checks pause through sign-in and complete rollback. Temporary credential
+ownership during cleanup or another disconnect defers verification without
+false error/recovery notifications; the next scheduled or explicit check retries.
+Saving cloud results cannot erase an unrelated sign-in or account warning.
 Each verified defect has a focused regression test. The last local full Codex
 run was interrupted by its usage limit and is not counted as completed. GitHub
 Codex reviews are requested only after current CI passes.
