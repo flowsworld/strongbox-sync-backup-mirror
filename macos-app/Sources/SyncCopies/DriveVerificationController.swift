@@ -14,12 +14,14 @@ struct DriveLocalInput: Sendable {
     let filename: String
     let destinationID: String
     let makeSnapshot: @Sendable () async throws -> DriveLocalSnapshot
+    var drivePath: GoogleDriveLocalPath? = nil
 }
 
 struct DriveVerificationBinding: Codable, Equatable, Sendable {
     let accountID: String
     let folderID: String
     let folderName: String
+    var automaticDestinationID: String? = nil
 }
 
 struct DriveNotificationPreferences: Codable, Equatable, Sendable {
@@ -49,6 +51,18 @@ struct DriveVerificationEvent: Codable, Equatable, Identifiable, Sendable {
 }
 
 enum DriveNotificationDelivery: Sendable { case delivered, permissionDenied }
+
+enum DriveAutomaticSetupProblem: Equatable {
+    case account, folder, unavailable
+
+    var messageKey: String {
+        switch self {
+        case .account: "Connect the Google account used by this local Drive folder, or choose a folder manually."
+        case .folder: "The local Drive path could not be matched uniquely. Choose a folder manually."
+        case .unavailable: "The Drive location could not be checked. Retry or choose a folder manually."
+        }
+    }
+}
 
 enum DriveControllerFailure: Error, Equatable {
     case unavailable, busy, settingsUnavailable, invalidSavedState, accountUnavailable, folderUnavailable, connectionFailed
@@ -80,6 +94,8 @@ struct DriveVerificationEnvironment {
     let history: @MainActor (DriveVerificationEvent) -> Void
     let clock: @MainActor () -> UInt64
     var credentialCleanupStatus: (@Sendable () async throws -> Bool)? = nil
+    var discoverFolder: (@Sendable (String, GoogleDriveLocalPath) async throws -> GoogleDriveFolder)? = nil
+    var otherCopies: (@Sendable (String, String, String, UploadLocalFingerprint) async throws -> Int)? = nil
 
     static func live(accounts: GoogleDriveAccounts, signIn: GoogleDriveSignIn, transport: GoogleDriveTransport,
                      localInputs: @escaping @MainActor () throws -> [DriveLocalInput],
@@ -99,7 +115,9 @@ struct DriveVerificationEnvironment {
         }, remoteFile: { try await accounts.remoteFile(accountID: $0, folderID: $1, filename: $2) },
              localInputs: localInputs, deliver: deliver, cancelNotification: cancelNotification, history: history,
              clock: { UInt64(max(0, Date().timeIntervalSince1970)) },
-             credentialCleanupStatus: { try await accounts.hasPendingCleanup() })
+             credentialCleanupStatus: { try await accounts.hasPendingCleanup() },
+             discoverFolder: { try await accounts.folder(accountID: $0, path: $1) },
+             otherCopies: { try await accounts.otherCopies(accountID: $0, folderID: $1, filename: $2, local: $3) })
     }
 }
 
@@ -114,6 +132,10 @@ final class DriveVerificationController: ObservableObject {
     @Published private(set) var isConnecting = false
     @Published private(set) var isChecking = false
     @Published private(set) var cleanupPending = false
+    @Published private(set) var automaticSetupProblems: [UUID: DriveAutomaticSetupProblem] = [:]
+    @Published private(set) var additionalCopyCounts: [UUID: Int] = [:]
+    @Published private(set) var localDriveDatabaseIDs: Set<UUID> = []
+    var automaticCheckingDisabled: Set<UUID> { settings.automaticallyDisabled ?? [] }
     var isAvailable: Bool { environment != nil }
     var canChangeSettings: Bool { !stopped && !demo }
     static let permissionURL = URL(string: "https://myaccount.google.com/connections")!
@@ -252,6 +274,7 @@ final class DriveVerificationController: ObservableObject {
         let oldEvents = next.records[databaseID]?.pending ?? []
         next.bindings[databaseID] = DriveVerificationBinding(accountID: accountID, folderID: folder.id, folderName: folder.name)
         next.records.removeValue(forKey: databaseID)
+        next.automaticallyDisabled?.remove(databaseID)
         try commit(next)
         oldEvents.forEach { environment.cancelNotification($0.id) }
         accounts = current
@@ -265,8 +288,18 @@ final class DriveVerificationController: ObservableObject {
         let pending = next.records[databaseID]?.pending ?? []
         next.bindings.removeValue(forKey: databaseID)
         next.records.removeValue(forKey: databaseID)
+        next.automaticallyDisabled = (next.automaticallyDisabled ?? []).union([databaseID])
         try commit(next)
         if let environment { pending.forEach { environment.cancelNotification($0.id) } }
+    }
+
+    func enableAutomatic(databaseID: UUID) throws {
+        guard !stopped else { throw DriveControllerFailure.busy }
+        invalidateChecks()
+        var next = settings
+        next.automaticallyDisabled?.remove(databaseID)
+        try commit(next)
+        requestCheck()
     }
 
     /// Stops checks locally before touching the account registry. Never revokes Google's grant implicitly.
@@ -380,6 +413,8 @@ final class DriveVerificationController: ObservableObject {
     }
 
     private func invalidateChecks() {
+        additionalCopyCounts = [:]
+        automaticSetupProblems = [:]
         generation &+= 1
         checkTask?.cancel()
         validatedCopies.removeAll()
@@ -406,6 +441,8 @@ final class DriveVerificationController: ObservableObject {
         guard let environment, !isConnecting, connectionCancellation == nil else { return }
         validatedCopies.removeAll()
         results = [:]
+        automaticSetupProblems = [:]
+        additionalCopyCounts = [:]
         let inputs: [DriveLocalInput]
         do { inputs = try environment.localInputs() }
         catch {
@@ -421,6 +458,7 @@ final class DriveVerificationController: ObservableObject {
         // Retained bindings for disabled or removed databases are inactive.
         let active = Set(inputs.map(\.id))
         activeDatabaseIDs = active
+        localDriveDatabaseIDs = Set(inputs.filter { $0.drivePath != nil }.map(\.id))
         cancelScheduled { !active.contains($0.databaseID) }
         publish()
         do {
@@ -441,7 +479,10 @@ final class DriveVerificationController: ObservableObject {
         }
         for input in inputs {
             guard captured == generation, !Task.isCancelled else { return }
+            await discoverBinding(for: input, generation: captured)
+            guard captured == generation, !Task.isCancelled else { return }
             guard let binding = settings.bindings[input.id],
+                  binding.automaticDestinationID == nil || binding.automaticDestinationID == input.destinationID,
                   !disconnectingAccounts.contains(binding.accountID) else { continue }
             let context: UploadVerificationContext
             do {
@@ -491,6 +532,12 @@ final class DriveVerificationController: ObservableObject {
                 guard captured == generation, !Task.isCancelled else { return }
                 await recordResult(id: input.id, name: input.name, context: context, local: snapshot.fingerprint,
                                    outcome: remote.map(UploadCheckOutcome.file) ?? .missing, generation: captured)
+                if results[input.id]?.status == .confirmed, let otherCopies = environment.otherCopies {
+                    // This advisory search cannot change the authoritative folder result.
+                    let count = try? await otherCopies(binding.accountID, binding.folderID, input.filename, snapshot.fingerprint)
+                    guard captured == generation, !Task.isCancelled else { return }
+                    if let count, count > 0 { additionalCopyCounts[input.id] = count }
+                }
             } catch {
                 guard captured == generation, !Task.isCancelled else { return }
                 if error as? GoogleDriveAccountFailure == .busy {
@@ -503,6 +550,49 @@ final class DriveVerificationController: ObservableObject {
                 await recordResult(id: input.id, name: input.name, context: context, local: snapshot?.fingerprint,
                                    outcome: .failure(Self.problem(error)), generation: captured)
             }
+        }
+    }
+
+    /// Known local Drive paths opt in through a connected matching account.
+    /// Manual bindings and explicit per-database opt-outs always take precedence.
+    private func discoverBinding(for input: DriveLocalInput, generation captured: UInt64) async {
+        guard let environment, let discoverFolder = environment.discoverFolder else { return }
+        if let binding = settings.bindings[input.id], let destination = binding.automaticDestinationID,
+           destination != input.destinationID {
+            var next = settings
+            let pending = next.records[input.id]?.pending ?? []
+            next.bindings.removeValue(forKey: input.id)
+            next.records.removeValue(forKey: input.id)
+            do { try commit(next) }
+            catch { failure = .settingsUnavailable; return }
+            pending.forEach { environment.cancelNotification($0.id) }
+            cancelScheduled { $0.databaseID == input.id }
+        }
+        guard settings.bindings[input.id] == nil,
+              !(settings.automaticallyDisabled?.contains(input.id) ?? false),
+              let path = input.drivePath, !accounts.isEmpty else { return }
+        let candidates = accounts.filter { $0.emailAddress?.caseInsensitiveCompare(path.accountEmail) == .orderedSame }
+        guard candidates.count == 1, let account = candidates.first,
+              !disconnectingAccounts.contains(account.id) else {
+            automaticSetupProblems[input.id] = .account
+            return
+        }
+        do {
+            let folder = try await discoverFolder(account.id, path)
+            let currentAccounts = try await environment.listAccounts()
+            guard captured == generation, !Task.isCancelled else { return }
+            guard currentAccounts == accounts else { localCopiesChanged(); requestCheck(); return }
+            var next = settings
+            let relativeName = path.components.joined(separator: " / ")
+            let name = !relativeName.isEmpty && relativeName.unicodeScalars.count <= 1024 ? relativeName : folder.name
+            next.bindings[input.id] = DriveVerificationBinding(accountID: account.id, folderID: folder.id,
+                folderName: name, automaticDestinationID: input.destinationID)
+            try commit(next)
+        } catch {
+            guard captured == generation, !Task.isCancelled else { return }
+            if error as? GoogleDriveAccountFailure == .busy { return }
+            if error as? DriveControllerFailure == .settingsUnavailable { failure = .settingsUnavailable }
+            automaticSetupProblems[input.id] = error is GoogleDriveMetadataError ? .folder : .unavailable
         }
     }
 
@@ -675,6 +765,7 @@ final class DriveVerificationController: ObservableObject {
         var preferences = DriveNotificationPreferences()
         var bindings: [UUID: DriveVerificationBinding] = [:]
         var records: [UUID: Record] = [:]
+        var automaticallyDisabled: Set<UUID>? = nil
     }
 
     private static func load(_ url: URL) throws -> Settings {
@@ -701,12 +792,14 @@ final class DriveVerificationController: ObservableObject {
         let settings: Settings
         do { settings = try JSONDecoder().decode(Settings.self, from: data) }
         catch { throw DriveControllerFailure.invalidSavedState }
-        guard settings.version == 1, settings.bindings.count <= 1000, settings.records.count <= 1000 else {
+        guard settings.version == 1, settings.bindings.count <= 1000, settings.records.count <= 1000,
+              (settings.automaticallyDisabled?.count ?? 0) <= 1000 else {
             throw DriveControllerFailure.invalidSavedState
         }
         for binding in settings.bindings.values {
             guard binding.accountID.hasPrefix("google-drive:"), binding.accountID.utf8.count <= 512,
                   !binding.folderName.isEmpty, binding.folderName.unicodeScalars.count <= 1024,
+                  binding.automaticDestinationID.map({ !$0.isEmpty && $0.utf8.count <= 1024 }) ?? true,
                   (try? GoogleDriveMetadata.folderID(from: binding.folderID)) == binding.folderID else {
                 throw DriveControllerFailure.invalidSavedState
             }

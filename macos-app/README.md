@@ -184,6 +184,23 @@ Die Vorbereitung für Google Drive, Release-Bau und Updates ist dokumentiert:
   Flo hat Drive A mit mehreren Konten, Updates A auf der Info-Seite,
   ersten Start B und Icon C gewählt. Diese Varianten sind umgesetzt.
 
+Nach der Google-Anmeldung erkennt die App konventionelle lokale Drive-Ziele
+unter `Library/CloudStorage`. Sie ordnet das passende verbundene Konto zu und
+löst den relativen Ordnerpfad in Drive eindeutig auf. Ein Dateipicker oder ein
+Ordnerlink ist dafür nicht erforderlich. Die ermittelte Ordner-ID bleibt für
+spätere Prüfungen gespeichert. Gleiche Dateinamen im eigentlichen Zielordner
+bleiben ein Fehler; identische Dateien in anderen Ordnern erzeugen nur einen
+zusätzlichen Hinweis. Diese Hinweissuche beeinflusst den eigentlichen Vergleich
+nicht.
+
+Google garantiert das lokale Konten-/Ordnernamensformat nicht als öffentliche
+Schnittstelle. Unbekannte, frei gespiegelte und geteilte Ablagen lassen sich
+weiter über den bisherigen Ordnerlink oder die ID einrichten. Manuelle
+Zuordnungen bleiben erhalten. Ausgeschaltete Cloud-Prüfungen bleiben auch nach
+einem Neustart aus. Bei automatisch zugeordneten Datenbanken löst ein neuer
+lokaler Zielordner die Zuordnung erneut aus. Die Grenzen und Quellen stehen in
+[der Pfadrecherche](../docs/research/google-drive-path-discovery.md).
+
 Die optionale Google-Drive-Prüfung ist implementiert. Sie braucht einen eigenen
 Desktop-OAuth-Client. Die [Einrichtung](../docs/manual/native-google-setup.md) ist
 vorbereitet; ohne Client-Konfiguration bleibt sie deaktiviert. Der tatsächliche

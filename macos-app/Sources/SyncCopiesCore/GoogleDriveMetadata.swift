@@ -2,7 +2,7 @@ import Foundation
 
 public enum GoogleDriveMetadataError: Error, Equatable, Sendable {
     case invalidFolderID, invalidFolderURL, invalidFilename, malformedResponse
-    case unexpectedFolder, unexpectedFile, incompleteSearch, ambiguousFile
+    case unexpectedFolder, unexpectedFile, incompleteSearch, ambiguousFile, ambiguousFolder
     case invalidPageToken, paginationCycle, paginationLimit, searchFinished, responseTooLarge
 }
 
@@ -90,8 +90,7 @@ public struct GoogleDriveFileSearch: Sendable {
     private let folderID: String
     private let filename: String
     private var match: UploadRemoteFile?
-    private var pages = 0
-    private var seenTokens = Set<String>()
+    private var pagination = DrivePagination()
 
     public init(folder: GoogleDriveFolder, filename: String) throws {
         guard !filename.isEmpty, filename.unicodeScalars.count <= 1024 else {
@@ -106,40 +105,154 @@ public struct GoogleDriveFileSearch: Sendable {
     public mutating func consume(_ data: Data) throws -> GoogleDriveSearchStep {
         guard request != nil else { throw GoogleDriveMetadataError.searchFinished }
         request = nil
-        pages += 1
-        let page = try driveResponse(FilePage.self, data: data)
-        guard !page.incompleteSearch else { throw GoogleDriveMetadataError.incompleteSearch }
+        let page = try driveResponse(DrivePage<FileResponse>.self, data: data)
+        try pagination.begin(incomplete: page.incompleteSearch)
         var candidate = match
         for response in page.files {
             guard response.name == filename, !response.trashed, response.parents.contains(folderID) else {
                 throw GoogleDriveMetadataError.unexpectedFile
             }
-            guard validDriveID(response.id), !response.size.isEmpty, response.size.utf8.count <= 20,
-                  response.size.utf8.allSatisfy({ (48...57).contains($0) }),
-                  let size = Int64(response.size) else {
-                throw GoogleDriveMetadataError.malformedResponse
-            }
-            let file: UploadRemoteFile
-            do {
-                file = try UploadRemoteFile(id: response.id, size: size, sha256: response.sha256Checksum, md5: response.md5Checksum)
-            } catch {
-                throw GoogleDriveMetadataError.malformedResponse
-            }
+            let file = try response.remoteFile()
             guard candidate == nil else { throw GoogleDriveMetadataError.ambiguousFile }
             candidate = file
         }
-        guard let token = page.nextPageToken else {
+        guard let token = try pagination.continuation(page.nextPageToken) else {
             return .complete(candidate)
         }
-        guard validDriveString(token) else { throw GoogleDriveMetadataError.invalidPageToken }
-        guard !seenTokens.contains(token) else { throw GoogleDriveMetadataError.paginationCycle }
-        guard pages < 100 else { throw GoogleDriveMetadataError.paginationLimit }
         let next = try fileSearchRequest(folderID: folderID, filename: filename, pageToken: token)
-        seenTokens.insert(token)
         match = candidate
         request = next
         return .nextPage(next)
     }
+}
+
+public enum GoogleDriveFolderSearchStep: Equatable, Sendable {
+    case nextPage(GoogleDriveMetadataRequest)
+    case complete(GoogleDriveFolder?)
+}
+
+/// Resolve exactly one named child of an already verified folder, including all search pages.
+public struct GoogleDriveFolderSearch: Sendable {
+    public private(set) var request: GoogleDriveMetadataRequest?
+    private let folderID: String
+    private let name: String
+    private var match: GoogleDriveFolder?
+    private var pagination = DrivePagination()
+
+    public init(folder: GoogleDriveFolder, name: String) throws {
+        guard !name.isEmpty, name.unicodeScalars.count <= 1024 else { throw GoogleDriveMetadataError.invalidFilename }
+        folderID = folder.id
+        self.name = name
+        request = try folderSearchRequest(folderID: folder.id, name: name, pageToken: nil)
+    }
+
+    public mutating func consume(_ data: Data) throws -> GoogleDriveFolderSearchStep {
+        guard request != nil else { throw GoogleDriveMetadataError.searchFinished }
+        request = nil
+        let page = try driveResponse(DrivePage<ChildFolderResponse>.self, data: data)
+        try pagination.begin(incomplete: page.incompleteSearch)
+        var candidate = match
+        for response in page.files {
+            guard validDriveID(response.id), response.parents.allSatisfy(validDriveID) else {
+                throw GoogleDriveMetadataError.malformedResponse
+            }
+            guard response.name == name, !response.trashed, response.parents.contains(folderID),
+                  response.mimeType == "application/vnd.google-apps.folder" else {
+                throw GoogleDriveMetadataError.unexpectedFolder
+            }
+            guard candidate == nil else { throw GoogleDriveMetadataError.ambiguousFolder }
+            candidate = GoogleDriveFolder(id: response.id, name: response.name)
+        }
+        guard let token = try pagination.continuation(page.nextPageToken) else { return .complete(candidate) }
+        let next = try folderSearchRequest(folderID: folderID, name: name, pageToken: token)
+        match = candidate
+        request = next
+        return .nextPage(next)
+    }
+}
+
+public enum GoogleDriveOtherCopiesSearchStep: Equatable, Sendable {
+    case nextPage(GoogleDriveMetadataRequest)
+    case complete(Int)
+}
+
+/// Informational only: count same-named, checksum-identical copies outside the selected folder.
+/// An unavailable or incomplete search must never invalidate the primary folder's verification.
+public struct GoogleDriveOtherCopiesSearch: Sendable {
+    public private(set) var request: GoogleDriveMetadataRequest?
+    private let filename: String
+    private let excludingFolderID: String
+    private let local: UploadLocalFingerprint
+    private var count = 0
+    private var seenIDs = Set<String>()
+    private var pagination = DrivePagination()
+
+    public init(filename: String, excludingFolderID: String, local: UploadLocalFingerprint) throws {
+        guard !filename.isEmpty, filename.unicodeScalars.count <= 1024 else { throw GoogleDriveMetadataError.invalidFilename }
+        guard validDriveID(excludingFolderID) else { throw GoogleDriveMetadataError.invalidFolderID }
+        self.filename = filename
+        self.excludingFolderID = excludingFolderID
+        self.local = local
+        request = try otherCopiesRequest(filename: filename, excludingFolderID: excludingFolderID, pageToken: nil)
+    }
+
+    public mutating func consume(_ data: Data) throws -> GoogleDriveOtherCopiesSearchStep {
+        guard request != nil else { throw GoogleDriveMetadataError.searchFinished }
+        request = nil
+        let page = try driveResponse(DrivePage<FileResponse>.self, data: data)
+        try pagination.begin(incomplete: page.incompleteSearch)
+        var candidateCount = count
+        for response in page.files {
+            guard response.name == filename, !response.trashed, !response.parents.isEmpty,
+                  !response.parents.contains(excludingFolderID) else { throw GoogleDriveMetadataError.unexpectedFile }
+            guard response.parents.allSatisfy(validDriveID) else { throw GoogleDriveMetadataError.malformedResponse }
+            let file = try response.remoteFile()
+            guard seenIDs.insert(file.id).inserted else { throw GoogleDriveMetadataError.malformedResponse }
+            let digestMatches = file.sha256.map { $0 == local.sha256 } ?? file.md5.map { $0 == local.md5 } ?? false
+            if file.size == local.size && digestMatches { candidateCount += 1 }
+        }
+        guard let token = try pagination.continuation(page.nextPageToken) else { return .complete(candidateCount) }
+        let next = try otherCopiesRequest(filename: filename, excludingFolderID: excludingFolderID, pageToken: token)
+        count = candidateCount
+        request = next
+        return .nextPage(next)
+    }
+}
+
+private struct DrivePagination: Sendable {
+    private var pages = 0
+    private var seenTokens = Set<String>()
+
+    mutating func begin(incomplete: Bool) throws {
+        pages += 1
+        guard !incomplete else { throw GoogleDriveMetadataError.incompleteSearch }
+    }
+
+    mutating func continuation(_ token: String?) throws -> String? {
+        guard let token else { return nil }
+        guard validDriveString(token) else { throw GoogleDriveMetadataError.invalidPageToken }
+        guard seenTokens.insert(token).inserted else { throw GoogleDriveMetadataError.paginationCycle }
+        guard pages < 100 else { throw GoogleDriveMetadataError.paginationLimit }
+        return token
+    }
+}
+
+private struct ChildFolderResponse: Decodable {
+    let id: String
+    let name: String
+    let mimeType: String
+    let parents: [String]
+    let trashed: Bool
+}
+
+private func folderSearchRequest(folderID: String, name: String, pageToken: String?) throws -> GoogleDriveMetadataRequest {
+    try searchRequest(query: "'\(folderID)' in parents and name = '\(queryString(name))' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+                      fields: "id,name,mimeType,parents,trashed", pageToken: pageToken)
+}
+
+private func otherCopiesRequest(filename: String, excludingFolderID: String, pageToken: String?) throws -> GoogleDriveMetadataRequest {
+    try searchRequest(query: "name = '\(queryString(filename))' and not '\(excludingFolderID)' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false",
+                      fields: "id,name,parents,trashed,size,md5Checksum,sha256Checksum", pageToken: pageToken)
 }
 
 private struct FolderResponse: Decodable {
@@ -158,6 +271,15 @@ private struct FileResponse: Decodable {
     let sha256Checksum: String?
     let md5Checksum: String?
 
+    func remoteFile() throws -> UploadRemoteFile {
+        guard validDriveID(id), !size.isEmpty, size.utf8.count <= 20,
+              size.utf8.allSatisfy({ (48...57).contains($0) }), let value = Int64(size) else {
+            throw GoogleDriveMetadataError.malformedResponse
+        }
+        do { return try UploadRemoteFile(id: id, size: value, sha256: sha256Checksum, md5: md5Checksum) }
+        catch { throw GoogleDriveMetadataError.malformedResponse }
+    }
+
     private enum CodingKeys: String, CodingKey {
         case id, name, parents, trashed, size, sha256Checksum, md5Checksum
     }
@@ -175,8 +297,8 @@ private struct FileResponse: Decodable {
     }
 }
 
-private struct FilePage: Decodable {
-    let files: [FileResponse]
+private struct DrivePage<Response: Decodable>: Decodable {
+    let files: [Response]
     let incompleteSearch: Bool
     let nextPageToken: String?
 
@@ -184,7 +306,7 @@ private struct FilePage: Decodable {
 
     init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
-        files = try values.decode([FileResponse].self, forKey: .files)
+        files = try values.decode([Response].self, forKey: .files)
         incompleteSearch = values.contains(.incompleteSearch) ? try values.decode(Bool.self, forKey: .incompleteSearch) : false
         nextPageToken = try values.decodeIfPresent(String.self, forKey: .nextPageToken)
     }
@@ -207,10 +329,17 @@ private func validDriveString(_ value: String) -> Bool {
 }
 
 private func fileSearchRequest(folderID: String, filename: String, pageToken: String?) throws -> GoogleDriveMetadataRequest {
-    let escaped = filename.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
+    try searchRequest(query: "'\(folderID)' in parents and name = '\(queryString(filename))' and trashed = false",
+                      fields: "id,name,parents,trashed,size,md5Checksum,sha256Checksum", pageToken: pageToken)
+}
+
+private func queryString(_ value: String) -> String {
+    value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
+}
+
+private func searchRequest(query: String, fields: String, pageToken: String?) throws -> GoogleDriveMetadataRequest {
     var parameters = [
-        ("q", "'\(folderID)' in parents and name = '\(escaped)' and trashed = false"),
-        ("fields", "nextPageToken,incompleteSearch,files(id,name,parents,trashed,size,md5Checksum,sha256Checksum)"),
+        ("q", query), ("fields", "nextPageToken,incompleteSearch,files(\(fields))"),
         ("spaces", "drive"), ("pageSize", "100"),
         ("supportsAllDrives", "true"), ("includeItemsFromAllDrives", "true")
     ]
