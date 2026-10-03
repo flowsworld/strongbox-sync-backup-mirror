@@ -410,6 +410,42 @@ final class GoogleDriveAccountsTests: XCTestCase {
         XCTAssertEqual(remaining, [previous.account.credentialID: previousCredential])
     }
 
+    func testFailedPreviousCredentialRestorationKeepsCommittedReplacementTracked() async throws {
+        let directory = try directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let keychain = DriveCredentialFixture()
+        let registry = directory.appendingPathComponent("accounts.json")
+        let transport = DriveHTTPFixture(outcomes: []).transport
+        let accounts = GoogleDriveAccounts(registryURL: registry, client: try client(), credentials: keychain.store,
+                                          transport: transport)
+        let previous = try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111"), tokens: tokens())
+        await keychain.suspendNextRemoval()
+        let reconnect = Task { try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111"), tokens: tokens(refresh: "replacement")) }
+        let deadline = Date().addingTimeInterval(2)
+        while !(await keychain.isRemovalSuspended), Date() < deadline { try await Task.sleep(for: .milliseconds(1)) }
+        let suspended = await keychain.isRemovalSuspended
+        XCTAssertTrue(suspended)
+        await keychain.failAddAfterWrite(true)
+        reconnect.cancel()
+        await keychain.releaseRemoval()
+        do { _ = try await reconnect.value; XCTFail("Expected failed credential restoration") }
+        catch { XCTAssertEqual(error as? GoogleDriveAccountFailure, .rollbackFailed) }
+        let retained = await keychain.snapshot()
+        let replacementID = try XCTUnwrap(Set(retained.keys).subtracting([previous.account.credentialID]).first)
+        XCTAssertNotNil(retained[previous.account.credentialID])
+        let persisted = try String(contentsOf: registry, encoding: .utf8)
+        XCTAssertTrue(persisted.contains(replacementID.uuidString))
+        let pending = try await accounts.hasPendingCleanup()
+        XCTAssertTrue(pending)
+        await keychain.failAddAfterWrite(false)
+        let reopened = GoogleDriveAccounts(registryURL: registry, client: try client(), credentials: keychain.store,
+                                           transport: transport)
+        let active = try await reopened.list()
+        XCTAssertEqual(active.map(\.credentialID), [replacementID])
+        let remaining = await keychain.snapshot()
+        XCTAssertEqual(Set(remaining.keys), [replacementID])
+    }
+
     func testReconnectRepairsAnAlreadyMissingCredential() async throws {
         let directory = try directory()
         defer { try? FileManager.default.removeItem(at: directory) }

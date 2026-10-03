@@ -266,7 +266,8 @@ actor GoogleDriveAccounts {
         restored.pendingRemovals.append(account.credentialID)
         try saveRegistry(restored)
         // The restored registry must be durable before deleting the replacement.
-        // Failed restoration or removal leaves both credentials safely journaled.
+        // If restoration fails, the replacement remains active. A failed sync
+        // or replacement removal leaves its credential recorded for retry.
         try syncRegistryDirectory()
         try await credentials.remove(account.credentialID)
         restored.pendingRemovals.removeAll { $0 == account.credentialID }
