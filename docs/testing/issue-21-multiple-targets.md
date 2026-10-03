@@ -41,6 +41,21 @@ Host: Apple Silicon, macOS 27.0.1. Xcode was selected only through
 - Legacy Drive bindings, opt-outs, records and pending alerts move only to the
   original target. Events retain the actual database ID for navigation.
 - Drive checks, disabling and freshness are independent for copies of one file.
+- Replacing a disabled legacy target before enabling its file does not move the
+  original target's Drive selection to the replacement.
+
+## Independent reviews
+
+The Standards review found no documented-rule violations and one nonblocking
+naming ambiguity between database IDs and copy IDs. The controller API and
+local Drive selection collection now use copy-specific names.
+
+The Spec review found one migration gap: a legacy Drive selection could attach
+to a replacement target if the original file was disabled. Preferences now
+persist the original target identity. A focused model test demonstrated the
+failure before the fix and passes afterward. The subsequent 48-test preferences,
+model migration and Drive controller/freshness selection passed. No findings
+were dismissed as false positives.
 
 All automated copy tests used synthetic backups and isolated temporary settings.
 Provider replies and operating-system notification delivery were simulated at

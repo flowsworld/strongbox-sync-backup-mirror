@@ -637,7 +637,7 @@ final class AppModel: ObservableObject {
         guard !isDemo, !isChecking, let environment else { return [] }
         let resolveFolder = environment.resolveFolder
         return databases.filter { preference(for: $0).enabled }.flatMap { database in
-            targets(for: database).enumerated().map { index, target in
+            targets(for: database).map { target in
                 let bookmark = target.bookmark
                 let result = states[database.id]?.targetStates[target.id]
                 let ready = sourceReadStatus == .available && preferences.globalFailure == nil &&
@@ -658,7 +658,7 @@ final class AppModel: ObservableObject {
                         })
                     }.value
                 }, drivePath: drivePath, databaseID: database.id,
-                   legacyDatabaseID: index == 0 ? database.id : nil,
+                   legacyDatabaseID: target.id == preference(for: database).legacyTargetID ? database.id : nil,
                    targetName: result?.targetName ?? label(for: bookmark))
             }
         }

@@ -124,6 +124,26 @@ private final class ModelNotificationGate {
 
 @MainActor
 struct AppModelTests {
+    @Test func replacementOfDisabledLegacyTargetDoesNotInheritItsDriveSelection() async throws {
+        let fixture = try ModelFixture()
+        let old = """
+        {"source":"c291cmNl","defaultTarget":"Y29tbW9u","databases":{
+        "\(fixture.first.id.uuidString)":{"enabled":false,"target":"b3ZlcnJpZGU="}},
+        "notifications":{"failures":true,"copies":false,"recoveries":false},"history":[]}
+        """
+        try Data(old.utf8).write(to: fixture.preferencesURL)
+        let model = AppModel(environment: fixture.environment())
+        try await settled(model)
+        let original = try #require(model.targets(for: fixture.first).first)
+        try model.addTarget(bookmark: Data("common".utf8), for: fixture.first, replacing: original.id)
+        try await settled(model)
+        model.setEnabled(true, for: fixture.first)
+        try await settled(model)
+        let replacement = try #require(model.driveLocalInputs().first { $0.databaseID == fixture.first.id })
+        #expect(replacement.legacyDatabaseID == nil)
+        await model.shutdown()
+    }
+
     @Test func filenameConflictBlocksOnlyCollidingTargetsOfEachFile() async throws {
         let fixture = try ModelFixture()
         let second = Database(id: fixture.second.id, filename: fixture.first.filename, displayName: "Second")

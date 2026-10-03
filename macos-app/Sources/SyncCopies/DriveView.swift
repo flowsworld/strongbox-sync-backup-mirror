@@ -138,7 +138,7 @@ private struct DriveTargetView: View {
                         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 Button(L10n.text("Turn off cloud checking")) {
-                    do { try drive.disable(databaseID: copyID); failure = nil }
+                    do { try drive.disable(copyID: copyID); failure = nil }
                     catch { failure = L10n.text("Google Drive settings could not be saved or read.") }
                 }.disabled(demo || saving)
                 DisclosureGroup(L10n.text("Change folder manually")) { manualFolder }
@@ -148,9 +148,9 @@ private struct DriveTargetView: View {
                     Text(L10n.text(problem.messageKey)).foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                if drive.automaticCheckingDisabled.contains(copyID), drive.localDriveDatabaseIDs.contains(copyID) {
+                if drive.automaticCheckingDisabled.contains(copyID), drive.localDriveCopyIDs.contains(copyID) {
                     Button(L10n.text("Use local Drive location")) {
-                        do { try drive.enableAutomatic(databaseID: copyID); failure = nil }
+                        do { try drive.enableAutomatic(copyID: copyID); failure = nil }
                         catch { failure = L10n.text("Google Drive settings could not be saved or read.") }
                     }.disabled(demo || saving || !drive.isAvailable || drive.accounts.isEmpty || drive.isChecking)
                 }
@@ -197,7 +197,7 @@ private struct DriveTargetView: View {
         saving = true
         Task {
             defer { saving = false }
-            do { try await drive.selectFolder(databaseID: copyID, accountID: account, input: folder); failure = nil }
+            do { try await drive.selectFolder(copyID: copyID, accountID: account, input: folder); failure = nil }
             catch { failure = L10n.text((error as? DriveControllerFailure)?.messageKey ?? "The Google Drive folder could not be verified.") }
         }
     }

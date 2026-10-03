@@ -181,7 +181,7 @@ private final class DriveControllerFixture {
     func controller() -> DriveVerificationController { DriveVerificationController(settingsURL: settingsURL, environment: environment) }
     func bind(_ controller: DriveVerificationController) async throws {
         await controller.start()
-        try await controller.selectFolder(databaseID: id, accountID: (await server.accounts())[0].id, input: "root")
+        try await controller.selectFolder(copyID: id, accountID: (await server.accounts())[0].id, input: "root")
         try await settle(controller)
     }
     func matching() throws -> UploadRemoteFile {
@@ -275,9 +275,9 @@ struct DriveVerificationControllerTests {
         let controller = fixture.controller()
         await controller.start()
         let account = await fixture.server.account
-        try await controller.selectFolder(databaseID: offlineCopyID, accountID: account.id, input: "offline-folder")
+        try await controller.selectFolder(copyID: offlineCopyID, accountID: account.id, input: "offline-folder")
         try await fixture.settle(controller)
-        try await controller.selectFolder(databaseID: cloudCopyID, accountID: account.id, input: "cloud-folder")
+        try await controller.selectFolder(copyID: cloudCopyID, accountID: account.id, input: "cloud-folder")
         try await fixture.settle(controller)
         #expect(controller.results[offlineCopyID]?.status == .error(.localFileUnavailable))
         #expect(controller.results[cloudCopyID]?.status == .confirmed)
@@ -286,7 +286,7 @@ struct DriveVerificationControllerTests {
         #expect(fixture.delivered.first?.copyID == offlineCopyID)
         #expect(fixture.delivered.first?.targetName == "Offline backup")
 
-        try controller.disable(databaseID: offlineCopyID)
+        try controller.disable(copyID: offlineCopyID)
         controller.requestCheck()
         try await fixture.settle(controller)
         #expect(controller.results[cloudCopyID]?.status == .confirmed)
@@ -298,7 +298,7 @@ struct DriveVerificationControllerTests {
         let fixture = try DriveControllerFixture()
         defer { fixture.remove() }
         let original = fixture.controller()
-        try original.disable(databaseID: fixture.id)
+        try original.disable(copyID: fixture.id)
         #expect(await original.quiesceAndPersist())
         let originalCopyID = UUID(), addedCopyID = UUID()
         fixture.copyID = originalCopyID
@@ -359,14 +359,14 @@ struct DriveVerificationControllerTests {
         await controller.start()
         controller.requestCheck()
         try await fixture.settle(controller)
-        try controller.disable(databaseID: fixture.id)
+        try controller.disable(copyID: fixture.id)
         controller = fixture.controller()
         await controller.start()
         controller.requestCheck()
         try await fixture.settle(controller)
         #expect(controller.bindings[fixture.id] == nil)
         #expect(controller.results[fixture.id] == nil)
-        try controller.enableAutomatic(databaseID: fixture.id)
+        try controller.enableAutomatic(copyID: fixture.id)
         try await fixture.settle(controller)
         #expect(controller.results[fixture.id]?.status == .confirmed)
     }
@@ -414,7 +414,7 @@ struct DriveVerificationControllerTests {
         controller.requestCheck()
         try await fixture.settle(controller)
         #expect(controller.bindings[fixture.id]?.automaticDestinationID == "new-destination")
-        try await controller.selectFolder(databaseID: fixture.id, accountID: (await fixture.server.accounts())[0].id, input: "manual-folder")
+        try await controller.selectFolder(copyID: fixture.id, accountID: (await fixture.server.accounts())[0].id, input: "manual-folder")
         try await fixture.settle(controller)
         fixture.destinationID = "another-destination"
         controller.localCopiesChanged()
@@ -457,7 +457,7 @@ struct DriveVerificationControllerTests {
         await fixture.server.set(remote: try fixture.matching())
         let controller = fixture.controller()
         try await fixture.bind(controller)
-        try await controller.selectFolder(databaseID: secondID, accountID: (await fixture.server.accounts())[0].id, input: "second-folder")
+        try await controller.selectFolder(copyID: secondID, accountID: (await fixture.server.accounts())[0].id, input: "second-folder")
         try await fixture.settle(controller)
         let gate = DriveSnapshotGate()
         fixture.otherCopyGate = gate
@@ -484,7 +484,7 @@ struct DriveVerificationControllerTests {
         await fixture.server.blockFolder()
         controller.requestCheck()
         try await fixture.awaitFolder()
-        try controller.disable(databaseID: fixture.id)
+        try controller.disable(copyID: fixture.id)
         var quitFinished = false
         let quit = Task { let ready = await controller.quiesceAndPersist(); quitFinished = true; return ready }
         for _ in 0..<100 { await Task.yield() }
@@ -767,13 +767,13 @@ struct DriveVerificationControllerTests {
         let controller = fixture.controller()
         await controller.start()
         await fixture.server.blockFolder()
-        let binding = Task { try await controller.selectFolder(databaseID: fixture.id, accountID: (await fixture.server.accounts())[0].id, input: "root") }
+        let binding = Task { try await controller.selectFolder(copyID: fixture.id, accountID: (await fixture.server.accounts())[0].id, input: "root") }
         try await fixture.awaitFolder()
         var prepared = false
         let preparation = Task { let result = await controller.quiesceAndPersist(); prepared = true; return result }
         for _ in 0..<100 { await Task.yield() }
         #expect(!prepared)
-        #expect(throws: DriveControllerFailure.busy) { try controller.disable(databaseID: fixture.id) }
+        #expect(throws: DriveControllerFailure.busy) { try controller.disable(copyID: fixture.id) }
         #expect(throws: DriveControllerFailure.busy) { try controller.setPreferences(DriveNotificationPreferences()) }
         await #expect(throws: DriveControllerFailure.busy) { try await controller.disconnect(accountID: "google-drive:synthetic-account") }
         await fixture.server.releaseFolder()
@@ -791,7 +791,7 @@ struct DriveVerificationControllerTests {
         let controller = fixture.controller()
         await controller.start()
         await fixture.server.setBlocked(true)
-        try await controller.selectFolder(databaseID: fixture.id, accountID: (await fixture.server.accounts())[0].id, input: "root")
+        try await controller.selectFolder(copyID: fixture.id, accountID: (await fixture.server.accounts())[0].id, input: "root")
         try await fixture.awaitQuery()
         fixture.now += 800
         await fixture.server.release()
@@ -857,7 +857,7 @@ struct DriveVerificationControllerTests {
         let controller = fixture.controller()
         await controller.start()
         await #expect(throws: DriveControllerFailure.folderUnavailable) {
-            try await controller.selectFolder(databaseID: fixture.id, accountID: (await fixture.server.accounts())[0].id, input: "https://untrusted.invalid/folder")
+            try await controller.selectFolder(copyID: fixture.id, accountID: (await fixture.server.accounts())[0].id, input: "https://untrusted.invalid/folder")
         }
         #expect(controller.bindings.isEmpty)
         try await fixture.bind(controller)
@@ -1022,7 +1022,7 @@ struct DriveVerificationControllerTests {
         let broken = DriveVerificationController(settingsURL: brokenURL, environment: fixture.environment)
         await broken.start()
         await #expect(throws: DriveControllerFailure.settingsUnavailable) {
-            try await broken.selectFolder(databaseID: fixture.id, accountID: (await fixture.server.accounts())[0].id, input: "root")
+            try await broken.selectFolder(copyID: fixture.id, accountID: (await fixture.server.accounts())[0].id, input: "root")
         }
         #expect(broken.bindings.isEmpty)
         #expect(fixture.delivered.map(\.kind) == [.confirmed])
@@ -1041,10 +1041,10 @@ struct DriveVerificationControllerTests {
             cancelNotification: base.cancelNotification, history: base.history, clock: base.clock)
         let controller = DriveVerificationController(settingsURL: fixture.settingsURL, environment: environment)
         await controller.start()
-        try await controller.selectFolder(databaseID: fixture.id, accountID: first.id, input: "root")
+        try await controller.selectFolder(copyID: fixture.id, accountID: first.id, input: "root")
         try await fixture.settle(controller)
         let otherDatabase = UUID()
-        try await controller.selectFolder(databaseID: otherDatabase, accountID: second.id, input: "root")
+        try await controller.selectFolder(copyID: otherDatabase, accountID: second.id, input: "root")
         try await fixture.settle(controller)
         let original = try #require(controller.bindings[otherDatabase])
         let disconnect = Task { try await controller.disconnect(accountID: first.id) }
@@ -1107,7 +1107,7 @@ struct DriveVerificationControllerTests {
         let event = try #require(fixture.delivered.first)
         #expect(event.kind == .confirmed)
         switch action {
-        case .database: try controller.disable(databaseID: fixture.id)
+        case .database: try controller.disable(copyID: fixture.id)
         case .preferences:
             preferences.confirmed = false
             try controller.setPreferences(preferences)
@@ -1129,7 +1129,7 @@ struct DriveVerificationControllerTests {
         let controller = fixture.controller()
         try await fixture.bind(controller)
         #expect(fixture.history.count == 1)
-        try controller.disable(databaseID: fixture.id)
+        try controller.disable(copyID: fixture.id)
         #expect(!fixture.cancelled.isEmpty)
         #expect(controller.results.isEmpty)
         #expect(await controller.quiesceAndPersist())
@@ -1150,7 +1150,7 @@ struct DriveVerificationControllerTests {
         let controller = fixture.controller()
         await fixture.server.setBlocked(true)
         await controller.start()
-        try await controller.selectFolder(databaseID: fixture.id, accountID: (await fixture.server.accounts())[0].id, input: "root")
+        try await controller.selectFolder(copyID: fixture.id, accountID: (await fixture.server.accounts())[0].id, input: "root")
         try await fixture.awaitQuery()
         #expect(controller.results[fixture.id]?.status == .pending)
         #expect(controller.results[fixture.id]?.localSHA256 == fixture.fingerprint.sha256)
@@ -1168,7 +1168,7 @@ struct DriveVerificationControllerTests {
         let accountID = (await fixture.server.accounts())[0].id
         await fixture.server.blockFolder()
         let selection = Task {
-            try await controller.selectFolder(databaseID: fixture.id, accountID: accountID, input: "root")
+            try await controller.selectFolder(copyID: fixture.id, accountID: accountID, input: "root")
         }
         try await fixture.awaitFolder()
         await fixture.server.rotate()

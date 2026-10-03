@@ -32,6 +32,7 @@ struct PreferencesTests {
         let database = try #require(preferences.databases[databaseID.uuidString])
         #expect(database.enabled)
         #expect(database.targets?.first?.bookmark == Data([7, 8, 9]))
+        #expect(database.legacyTargetID == database.targets?.first?.id)
         #expect(database.lastCopied == Date(timeIntervalSinceReferenceDate: 123))
         #expect(database.lastFailure?.rendered(locale: Locale(identifier: "en_US")) == "The latest backup is empty. The existing copy is preserved.")
         #expect(preferences.globalFailure?.rendered(locale: Locale(identifier: "en_US")) == "The saved folder permission is out of date. Please allow access to the folder again.")
@@ -43,5 +44,6 @@ struct PreferencesTests {
         let restored = try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(preferences))
         #expect(restored.history.first?.message.rendered(locale: Locale(identifier: "de_AT")) == "Neue Kopie erstellt")
         #expect(restored.databases[databaseID.uuidString]?.lastFailure == database.lastFailure)
+        #expect(restored.databases[databaseID.uuidString]?.legacyTargetID == database.legacyTargetID)
     }
 }

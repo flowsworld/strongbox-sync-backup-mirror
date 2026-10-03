@@ -39,6 +39,8 @@ struct DatabasePreferences: Codable, Sendable {
     var enabled = false
     // nil inherits common targets; an empty array explicitly selects none.
     var targets: [CopyTarget]?
+    // Legacy Drive selections belong to this original target, even while disabled.
+    var legacyTargetID: UUID?
     var progress: [String: TargetProgress] = [:]
     var lastCopied: Date?
     var lastReconciled: Date?
@@ -54,7 +56,7 @@ struct DatabasePreferences: Codable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case enabled, targets, target, progress, lastCopied, lastReconciled, lastFailure
+        case enabled, targets, target, legacyTargetID, progress, lastCopied, lastReconciled, lastFailure
     }
 
     init(from decoder: any Decoder) throws {
@@ -64,7 +66,9 @@ struct DatabasePreferences: Codable, Sendable {
             targets = try values.decodeIfPresent([CopyTarget].self, forKey: .targets)
         } else if let old = try values.decodeIfPresent(Data.self, forKey: .target) {
             targets = [.migrated(old)]
+            legacyTargetID = targets?.first?.id
         }
+        if values.contains(.legacyTargetID) { legacyTargetID = try values.decodeIfPresent(UUID.self, forKey: .legacyTargetID) }
         progress = try values.decodeIfPresent([String: TargetProgress].self, forKey: .progress) ?? [:]
         lastCopied = try values.decodeIfPresent(Date.self, forKey: .lastCopied)
         lastReconciled = try values.decodeIfPresent(Date.self, forKey: .lastReconciled)
@@ -75,6 +79,7 @@ struct DatabasePreferences: Codable, Sendable {
         var values = encoder.container(keyedBy: CodingKeys.self)
         try values.encode(enabled, forKey: .enabled)
         try values.encodeIfPresent(targets, forKey: .targets)
+        try values.encodeIfPresent(legacyTargetID, forKey: .legacyTargetID)
         try values.encode(progress, forKey: .progress)
         try values.encodeIfPresent(lastCopied, forKey: .lastCopied)
         try values.encodeIfPresent(lastReconciled, forKey: .lastReconciled)
@@ -108,6 +113,12 @@ struct Preferences: Codable, Sendable {
         notifications = try values.decode(NotificationPreferences.self, forKey: .notifications)
         history = try values.decode([HistoryEntry].self, forKey: .history)
         globalFailure = try values.decodeIfPresent(LocalizedMessage.self, forKey: .globalFailure)
+        if !values.contains(.defaultTargets) {
+            for (id, var database) in databases where database.targets == nil {
+                database.legacyTargetID = defaultTargets.first?.id
+                databases[id] = database
+            }
+        }
         // Preserve old error suppression and copy timestamps on the original target.
         for (id, var database) in databases where database.progress.isEmpty {
             if let target = (database.targets ?? defaultTargets).first {

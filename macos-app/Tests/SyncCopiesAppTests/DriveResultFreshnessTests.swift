@@ -70,7 +70,7 @@ struct DriveResultFreshnessTests {
         var preferences = DriveNotificationPreferences()
         preferences.confirmed = true
         try controller.setPreferences(preferences)
-        try await controller.selectFolder(databaseID: copyID, accountID: account.id, input: "synthetic-folder")
+        try await controller.selectFolder(copyID: copyID, accountID: account.id, input: "synthetic-folder")
         for _ in 0..<10_000 {
             if await provider.replaced, !controller.isChecking { break }
             await Task.yield()

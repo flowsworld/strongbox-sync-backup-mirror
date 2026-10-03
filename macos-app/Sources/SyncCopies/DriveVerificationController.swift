@@ -185,10 +185,10 @@ final class DriveVerificationController: ObservableObject {
     @Published private(set) var cleanupPending = false
     @Published private(set) var automaticSetupProblems: [UUID: DriveAutomaticSetupProblem] = [:]
     @Published private(set) var additionalCopyCounts: [UUID: Int] = [:]
-    @Published private(set) var localDriveDatabaseIDs: Set<UUID> = []
+    @Published private(set) var localDriveCopyIDs: Set<UUID> = []
     var automaticCheckingDisabled: Set<UUID> { settings.automaticallyDisabled ?? [] }
     var canRequestCheck: Bool {
-        !bindings.isEmpty || (!accounts.isEmpty && !localDriveDatabaseIDs.subtracting(automaticCheckingDisabled).isEmpty)
+        !bindings.isEmpty || (!accounts.isEmpty && !localDriveCopyIDs.subtracting(automaticCheckingDisabled).isEmpty)
     }
     var isAvailable: Bool { environment != nil }
     var canChangeSettings: Bool { !stopped && !demo }
@@ -307,13 +307,13 @@ final class DriveVerificationController: ObservableObject {
     }
 
     /// Resolution must complete against the same account credential generation before saving a binding.
-    func selectFolder(databaseID: UUID, accountID: String, input: String) async throws {
+    func selectFolder(copyID: UUID, accountID: String, input: String) async throws {
         try await performMutation {
-            try await self.bindFolder(databaseID: databaseID, accountID: accountID, input: input)
+            try await self.bindFolder(copyID: copyID, accountID: accountID, input: input)
         }
     }
 
-    private func bindFolder(databaseID: UUID, accountID: String, input: String) async throws {
+    private func bindFolder(copyID: UUID, accountID: String, input: String) async throws {
         guard let environment, !stopped else { throw DriveControllerFailure.unavailable }
         guard let account = accounts.first(where: { $0.id == accountID }) else { throw DriveControllerFailure.accountUnavailable }
         let folderID: String
@@ -327,33 +327,33 @@ final class DriveVerificationController: ObservableObject {
         let current = try await environment.listAccounts()
         guard captured == generation, current.contains(account) else { throw DriveControllerFailure.accountUnavailable }
         var next = settings
-        let oldEvents = next.records[databaseID]?.pending ?? []
-        next.bindings[databaseID] = DriveVerificationBinding(accountID: accountID, folderID: folder.id, folderName: folder.name)
-        next.records.removeValue(forKey: databaseID)
-        next.automaticallyDisabled?.remove(databaseID)
+        let oldEvents = next.records[copyID]?.pending ?? []
+        next.bindings[copyID] = DriveVerificationBinding(accountID: accountID, folderID: folder.id, folderName: folder.name)
+        next.records.removeValue(forKey: copyID)
+        next.automaticallyDisabled?.remove(copyID)
         try commit(next)
         oldEvents.forEach { environment.cancelNotification($0.id) }
         accounts = current
         requestCheck()
     }
 
-    func disable(databaseID: UUID) throws {
+    func disable(copyID: UUID) throws {
         guard !stopped else { throw DriveControllerFailure.busy }
         invalidateChecks()
         var next = settings
-        let pending = next.records[databaseID]?.pending ?? []
-        next.bindings.removeValue(forKey: databaseID)
-        next.records.removeValue(forKey: databaseID)
-        next.automaticallyDisabled = (next.automaticallyDisabled ?? []).union([databaseID])
+        let pending = next.records[copyID]?.pending ?? []
+        next.bindings.removeValue(forKey: copyID)
+        next.records.removeValue(forKey: copyID)
+        next.automaticallyDisabled = (next.automaticallyDisabled ?? []).union([copyID])
         try commit(next)
         if let environment { pending.forEach { environment.cancelNotification($0.id) } }
     }
 
-    func enableAutomatic(databaseID: UUID) throws {
+    func enableAutomatic(copyID: UUID) throws {
         guard !stopped else { throw DriveControllerFailure.busy }
         invalidateChecks()
         var next = settings
-        next.automaticallyDisabled?.remove(databaseID)
+        next.automaticallyDisabled?.remove(copyID)
         try commit(next)
         requestCheck()
     }
@@ -517,7 +517,7 @@ final class DriveVerificationController: ObservableObject {
         activeInputs = Dictionary(uniqueKeysWithValues: inputs.map { ($0.id, $0) })
         do { try migrateLegacySelections(inputs) }
         catch { failure = .settingsUnavailable; return }
-        localDriveDatabaseIDs = Set(inputs.filter { $0.drivePath != nil }.map(\.id))
+        localDriveCopyIDs = Set(inputs.filter { $0.drivePath != nil }.map(\.id))
         cancelScheduled { !active.contains($0.copyID) }
         publish()
         do {
