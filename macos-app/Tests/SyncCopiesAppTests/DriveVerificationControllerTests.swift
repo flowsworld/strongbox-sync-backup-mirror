@@ -9,6 +9,7 @@ private actor DriveServerFixture {
     var listed: [GoogleDriveAccount] = []
     var remote: UploadRemoteFile?
     var problem: UploadVerificationFailure?
+    var accountProblem: GoogleDriveAccountFailure?
     var calls = 0
     var blocked = false
     var suspended: CheckedContinuation<Void, Never>?
@@ -48,10 +49,12 @@ private actor DriveServerFixture {
         calls += 1
         let captured = remote
         if blocked { await withCheckedContinuation { suspended = $0 } }
+        if let accountProblem { throw accountProblem }
         if let problem { throw problem }
         return captured
     }
     func set(remote: UploadRemoteFile?, problem: UploadVerificationFailure? = nil) { self.remote = remote; self.problem = problem }
+    func setAccountProblem(_ problem: GoogleDriveAccountFailure?) { accountProblem = problem }
     func setBlocked(_ value: Bool) { blocked = value }
     func release() { blocked = false; suspended?.resume(); suspended = nil }
     func blockFolder() { folderBlocked = true }
@@ -225,6 +228,42 @@ struct DriveVerificationControllerTests {
         #expect(await shutdown.value)
         #expect(controller.accounts.isEmpty)
         #expect(controller.failure == nil)
+    }
+
+    @Test func cloudChecksWaitForSignInAndCancelledRollbackToFinish() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        await fixture.server.set(remote: try fixture.matching())
+        let controller = fixture.controller()
+        try await fixture.bind(controller)
+        let previousCalls = await fixture.server.calls
+        await fixture.server.blockConnection()
+        await fixture.server.setAccountProblem(.busy)
+        controller.connect()
+        for _ in 0..<10_000 {
+            if await fixture.server.connectionSuspended != nil { break }
+            await Task.yield()
+        }
+        try #require(await fixture.server.connectionSuspended != nil)
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(await fixture.server.calls == previousCalls)
+        #expect(controller.results.isEmpty)
+        #expect(fixture.delivered.isEmpty)
+        #expect(fixture.history.isEmpty)
+        controller.cancelConnect()
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(await fixture.server.calls == previousCalls)
+        await fixture.server.setAccountProblem(nil)
+        await fixture.server.releaseConnection()
+        for _ in 0..<10_000 {
+            if await fixture.server.calls > previousCalls { break }
+            await Task.yield()
+        }
+        try await fixture.settle(controller)
+        #expect(controller.results[fixture.id]?.status == .confirmed)
+        #expect(fixture.delivered.isEmpty)
     }
 
     @Test func cancelledSignInReportsAFailedCredentialRollback() async throws {

@@ -185,6 +185,7 @@ final class DriveVerificationController: ObservableObject {
         connectionGeneration &+= 1
         let captured = connectionGeneration
         isConnecting = true
+        invalidateChecks()
         connectionTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -192,7 +193,6 @@ final class DriveVerificationController: ObservableObject {
                 guard !Task.isCancelled, captured == connectionGeneration else { return }
                 invalidateChecks()
                 await start()
-                requestCheck()
             } catch {
                 // Cancelled sign-in can still fail to restore credentials. Keep
                 // that failure visible while ordinary cancellation stays quiet.
@@ -204,6 +204,7 @@ final class DriveVerificationController: ObservableObject {
             guard captured == connectionGeneration else { return }
             isConnecting = false
             connectionTask = nil
+            requestCheck()
         }
     }
 
@@ -222,6 +223,7 @@ final class DriveVerificationController: ObservableObject {
                 await old?.value
                 guard let self, captured == connectionGeneration else { return }
                 connectionCancellation = nil
+                requestCheck()
             }
         }
     }
@@ -399,7 +401,9 @@ final class DriveVerificationController: ObservableObject {
     }
 
     private func checkAll(generation captured: UInt64) async {
-        guard let environment else { return }
+        // Credential staging can temporarily reject refreshes for another account.
+        // Resume only after sign-in or its complete cancellation has settled.
+        guard let environment, !isConnecting, connectionCancellation == nil else { return }
         validatedCopies.removeAll()
         results = [:]
         let inputs: [DriveLocalInput]
