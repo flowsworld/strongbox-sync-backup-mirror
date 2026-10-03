@@ -119,6 +119,13 @@ private final class DriveControllerFixture {
     var validationFailure: UploadVerificationFailure?
     var validationFileFailure: MirrorError?
     var localEnabled = true
+    var drivePath: GoogleDriveLocalPath?
+    var destinationID = "destination-1"
+    var discoveryFailure: GoogleDriveMetadataError?
+    var otherCopyCount = 0
+    var otherCopyFailure = false
+    var extraLocalInput: DriveLocalInput?
+    var otherCopyGate: DriveSnapshotGate?
     var delivered: [DriveVerificationEvent] = []
     var history: [DriveVerificationEvent] = []
     var cancelled: [UUID] = []
@@ -146,19 +153,26 @@ private final class DriveControllerFixture {
                 let local = fingerprint, localProblem = localFailure, validationProblem = validationFailure
                 let fileProblem = validationFileFailure
                 let gate = snapshotGate
-                return [DriveLocalInput(id: id, name: "Fixture database", filename: "fixture.kdbx", destinationID: "destination-1", makeSnapshot: {
+                return [DriveLocalInput(id: id, name: "Fixture database", filename: "fixture.kdbx", destinationID: destinationID, makeSnapshot: {
                     if let gate { await gate.wait() }
                     if let localProblem { throw localProblem }
                     return DriveLocalSnapshot(fingerprint: local, validate: {
                         if let validationProblem { throw validationProblem }
                         if let fileProblem { throw fileProblem }
                     })
-                })]
+                }, drivePath: drivePath)] + (extraLocalInput.map { [$0] } ?? [])
             }, deliver: { [self] event in
                 if deliveryFails { throw UploadVerificationFailure.providerUnavailable }
                 delivered.append(event)
                 return permissionDenied ? .permissionDenied : .delivered
-            }, cancelNotification: { [self] in cancelled.append($0) }, history: { [self] in history.append($0) }, clock: { [self] in now })
+            }, cancelNotification: { [self] in cancelled.append($0) }, history: { [self] in history.append($0) }, clock: { [self] in now }, discoverFolder: { [self] _, _ in
+                if let problem = await discoveryFailure { throw problem }
+                return try await server.folder("automatic-folder")
+            }, otherCopies: { [self] _, _, _, _ in
+                if let gate = await otherCopyGate { await gate.wait() }
+                if await otherCopyFailure { throw UploadVerificationFailure.providerUnavailable }
+                return await otherCopyCount
+            })
     }
     func controller() -> DriveVerificationController { DriveVerificationController(settingsURL: settingsURL, environment: environment) }
     func bind(_ controller: DriveVerificationController) async throws {
@@ -199,6 +213,168 @@ private final class DriveControllerFixture {
 
 @MainActor
 struct DriveVerificationControllerTests {
+    @Test func automaticallyUsesMatchingAccountAndLocalDrivePathWithoutFolderSelection() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        fixture.drivePath = GoogleDriveLocalPath(directory: URL(fileURLWithPath:
+            "/Users/test/Library/CloudStorage/GoogleDrive-fixture@example.invalid/My Drive/Backups"))
+        #expect(fixture.drivePath != nil)
+        await fixture.server.set(remote: try fixture.matching())
+        let controller = fixture.controller()
+        await controller.start()
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(controller.bindings[fixture.id]?.folderID == "automatic-folder")
+        #expect(controller.bindings[fixture.id]?.automaticDestinationID == "destination-1")
+        #expect(controller.results[fixture.id]?.status == .confirmed)
+    }
+
+    @Test func explicitOptOutSurvivesRestartUntilAutomaticCheckingIsRequested() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        fixture.drivePath = GoogleDriveLocalPath(directory: URL(fileURLWithPath:
+            "/Users/test/Library/CloudStorage/GoogleDrive-fixture@example.invalid/My Drive/Backups"))
+        await fixture.server.set(remote: try fixture.matching())
+        var controller = fixture.controller()
+        await controller.start()
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        try controller.disable(databaseID: fixture.id)
+        controller = fixture.controller()
+        await controller.start()
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(controller.bindings[fixture.id] == nil)
+        #expect(controller.results[fixture.id] == nil)
+        try controller.enableAutomatic(databaseID: fixture.id)
+        try await fixture.settle(controller)
+        #expect(controller.results[fixture.id]?.status == .confirmed)
+    }
+
+    @Test func unknownAccountAndAmbiguousPathNeverGuessALocation() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        fixture.drivePath = GoogleDriveLocalPath(directory: URL(fileURLWithPath:
+            "/Users/test/Library/CloudStorage/GoogleDrive-other@example.invalid/My Drive/Backups"))
+        let controller = fixture.controller()
+        await controller.start()
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(controller.bindings.isEmpty)
+        #expect(controller.automaticSetupProblems[fixture.id] == .account)
+        fixture.drivePath = GoogleDriveLocalPath(directory: URL(fileURLWithPath:
+            "/Users/test/Library/CloudStorage/GoogleDrive-fixture@example.invalid/My Drive/Backups"))
+        fixture.discoveryFailure = .ambiguousFolder
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(controller.bindings.isEmpty)
+        #expect(controller.automaticSetupProblems[fixture.id] == .folder)
+        #expect(controller.canRequestCheck)
+        #expect(fixture.delivered.isEmpty)
+    }
+
+    @Test func aNewLocalDestinationRemapsAutomaticBindingsButKeepsManualOverrides() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        fixture.drivePath = GoogleDriveLocalPath(directory: URL(fileURLWithPath:
+            "/Users/test/Library/CloudStorage/GoogleDrive-fixture@example.invalid/My Drive/Backups"))
+        await fixture.server.set(remote: try fixture.matching())
+        let controller = fixture.controller()
+        await controller.start()
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        fixture.destinationID = "new-destination"
+        fixture.discoveryFailure = .ambiguousFolder
+        controller.localCopiesChanged()
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(controller.bindings[fixture.id] == nil)
+        #expect(controller.results[fixture.id] == nil)
+        fixture.discoveryFailure = nil
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(controller.bindings[fixture.id]?.automaticDestinationID == "new-destination")
+        try await controller.selectFolder(databaseID: fixture.id, accountID: (await fixture.server.accounts())[0].id, input: "manual-folder")
+        try await fixture.settle(controller)
+        fixture.destinationID = "another-destination"
+        controller.localCopiesChanged()
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(controller.bindings[fixture.id]?.folderID == "manual-folder")
+        #expect(controller.bindings[fixture.id]?.automaticDestinationID == nil)
+    }
+
+    @Test func duplicateNoticesNeverInvalidateTheChosenFolderOrSurviveNewContent() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        fixture.otherCopyCount = 2
+        await fixture.server.set(remote: try fixture.matching())
+        let controller = fixture.controller()
+        try await fixture.bind(controller)
+        #expect(controller.results[fixture.id]?.status == .confirmed)
+        #expect(controller.additionalCopyCounts[fixture.id] == 2)
+        fixture.otherCopyFailure = true
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(controller.results[fixture.id]?.status == .confirmed)
+        #expect(controller.additionalCopyCounts[fixture.id] == nil)
+        fixture.otherCopyFailure = false
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        controller.localCopiesChanged()
+        #expect(controller.additionalCopyCounts.isEmpty)
+        #expect(controller.results.isEmpty)
+    }
+
+    @Test func slowDuplicateLookupDoesNotDelayOtherDatabaseVerification() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        let secondID = UUID(), fingerprint = fixture.fingerprint
+        fixture.extraLocalInput = DriveLocalInput(id: secondID, name: "Second fixture", filename: "second.kdbx",
+            destinationID: "second-target", makeSnapshot: {
+                DriveLocalSnapshot(fingerprint: fingerprint, validate: {})
+            })
+        await fixture.server.set(remote: try fixture.matching())
+        let controller = fixture.controller()
+        try await fixture.bind(controller)
+        try await controller.selectFolder(databaseID: secondID, accountID: (await fixture.server.accounts())[0].id, input: "second-folder")
+        try await fixture.settle(controller)
+        let gate = DriveSnapshotGate()
+        fixture.otherCopyGate = gate
+        controller.requestCheck()
+        for _ in 0..<10_000 {
+            if await gate.entered { break }
+            await Task.yield()
+        }
+        #expect(await gate.entered)
+        #expect(controller.results[fixture.id]?.status == .confirmed)
+        #expect(controller.results[secondID]?.status == .confirmed)
+        fixture.otherCopyGate = nil
+        await gate.release()
+        try await fixture.settle(controller)
+    }
+
+    @Test func automaticResolutionCannotPublishAfterDisablingOrDuringQuit() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        fixture.drivePath = GoogleDriveLocalPath(directory: URL(fileURLWithPath:
+            "/Users/test/Library/CloudStorage/GoogleDrive-fixture@example.invalid/My Drive/Backups"))
+        let controller = fixture.controller()
+        await controller.start()
+        await fixture.server.blockFolder()
+        controller.requestCheck()
+        try await fixture.awaitFolder()
+        try controller.disable(databaseID: fixture.id)
+        var quitFinished = false
+        let quit = Task { let ready = await controller.quiesceAndPersist(); quitFinished = true; return ready }
+        for _ in 0..<100 { await Task.yield() }
+        #expect(!quitFinished)
+        await fixture.server.releaseFolder()
+        #expect(await quit.value)
+        #expect(controller.bindings.isEmpty)
+        #expect(controller.results.isEmpty)
+    }
+
     @Test func shutdownWaitsForStartedCredentialCleanupAndRejectsNewStarts() async throws {
         let fixture = try DriveControllerFixture()
         defer { fixture.remove() }

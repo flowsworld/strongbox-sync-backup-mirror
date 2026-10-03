@@ -543,6 +543,46 @@ final class GoogleDriveAccountsTests: XCTestCase {
         XCTAssertEqual(Set(remaining.keys), [repaired.account.credentialID])
     }
 
+    func testLocalDrivePathTraversesVerifiedParentsThroughTheRealRequestPolicy() async throws {
+        let directory = try directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let root = #"{"id":"root-id","name":"My Drive","mimeType":"application/vnd.google-apps.folder","trashed":false}"#
+        let child = #"{"files":[{"id":"backup-id","name":"Backups","mimeType":"application/vnd.google-apps.folder","parents":["root-id"],"trashed":false}],"incompleteSearch":false}"#
+        let nested = #"{"files":[{"id":"vault-id","name":"Vaults","mimeType":"application/vnd.google-apps.folder","parents":["backup-id"],"trashed":false}],"incompleteSearch":false}"#
+        let http = DriveHTTPFixture(outcomes: [.reply(200, root), .reply(200, child), .reply(200, nested)])
+        let accounts = GoogleDriveAccounts(registryURL: directory.appendingPathComponent("accounts.json"), client: try client(),
+                                          credentials: DriveCredentialFixture().store, transport: http.transport, clock: { 0 })
+        let saved = try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111", emailAddress: "fixture@example.invalid"), tokens: tokens())
+        let path = try XCTUnwrap(GoogleDriveLocalPath(directory: URL(fileURLWithPath:
+            "/Users/test/Library/CloudStorage/GoogleDrive-fixture@example.invalid/My Drive/Backups/Vaults")))
+        let folder = try await accounts.folder(accountID: saved.account.id, path: path)
+        XCTAssertEqual(folder.id, "vault-id")
+        let snapshot = await http.snapshot()
+        XCTAssertEqual(snapshot.requests.count, 3)
+        let queries = snapshot.requests.compactMap { request in
+            request.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "q" })?.value }
+        }
+        XCTAssertEqual(queries, [
+            "'root-id' in parents and name = 'Backups' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+            "'backup-id' in parents and name = 'Vaults' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"])
+        XCTAssertTrue(snapshot.requests.allSatisfy { $0.httpMethod == "GET" && $0.httpBody == nil })
+    }
+
+    func testLocalPathAccountMismatchCannotSendAnyMetadataRequest() async throws {
+        let directory = try directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let http = DriveHTTPFixture(outcomes: [])
+        let accounts = GoogleDriveAccounts(registryURL: directory.appendingPathComponent("accounts.json"), client: try client(),
+                                          credentials: DriveCredentialFixture().store, transport: http.transport, clock: { 0 })
+        let saved = try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111", emailAddress: "first@example.invalid"), tokens: tokens())
+        let path = try XCTUnwrap(GoogleDriveLocalPath(directory: URL(fileURLWithPath:
+            "/Users/test/Library/CloudStorage/GoogleDrive-second@example.invalid/My Drive")))
+        do { _ = try await accounts.folder(accountID: saved.account.id, path: path); XCTFail("Mismatched account was accepted") }
+        catch { XCTAssertEqual(error as? GoogleDriveAccountFailure, .invalidIdentity) }
+        let snapshot = await http.snapshot()
+        XCTAssertTrue(snapshot.requests.isEmpty)
+    }
+
     func testEveryRemoteLookupResolvesFolderAndSearchesByNameAgain() async throws {
         let directory = try directory()
         defer { try? FileManager.default.removeItem(at: directory) }

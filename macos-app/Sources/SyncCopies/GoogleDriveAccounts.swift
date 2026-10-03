@@ -381,6 +381,46 @@ actor GoogleDriveAccounts {
         return tokens
     }
 
+    /// Traverse exact names from this account's My Drive root. No first-match guesses.
+    func folder(accountID: String, path: GoogleDriveLocalPath) async throws -> GoogleDriveFolder {
+        let account = try requireAccount(accountID)
+        guard account.emailAddress?.caseInsensitiveCompare(path.accountEmail) == .orderedSame else {
+            throw GoogleDriveAccountFailure.invalidIdentity
+        }
+        let token = try await accessToken(accountID: accountID)
+        let root = try await transport.metadata(GoogleDriveMetadata.folderRequest(id: "root"), accessToken: token)
+        try requireCurrent(account)
+        try Task.checkCancellation()
+        var folder = try GoogleDriveMetadata.resolveFolder(root, requestedID: "root")
+        for name in path.components {
+            var search = try GoogleDriveFolderSearch(folder: folder, name: name)
+            var found: GoogleDriveFolder?
+            while let request = search.request {
+                let data = try await transport.metadata(request, accessToken: token)
+                try requireCurrent(account)
+                try Task.checkCancellation()
+                if case .complete(let child) = try search.consume(data) { found = child }
+            }
+            guard let child = found else { throw GoogleDriveMetadataError.unexpectedFolder }
+            folder = child
+        }
+        return folder
+    }
+
+    /// An optional notice about equal-content files elsewhere, never the primary check.
+    func otherCopies(accountID: String, folderID: String, filename: String, local: UploadLocalFingerprint) async throws -> Int {
+        let account = try requireAccount(accountID)
+        let token = try await accessToken(accountID: accountID)
+        var search = try GoogleDriveOtherCopiesSearch(filename: filename, excludingFolderID: folderID, local: local)
+        while let request = search.request {
+            let data = try await transport.metadata(request, accessToken: token)
+            try requireCurrent(account)
+            try Task.checkCancellation()
+            if case .complete(let count) = try search.consume(data) { return count }
+        }
+        throw GoogleDriveMetadataError.searchFinished
+    }
+
     func remoteFile(accountID: String, folderID: String, filename: String) async throws -> UploadRemoteFile? {
         let account = try requireAccount(accountID)
         let token = try await accessToken(accountID: accountID)

@@ -229,7 +229,8 @@ func allowedGoogleDriveRequest(_ request: URLRequest) -> Bool {
         && Set(fields.keys) == (fields["pageToken"] == nil
             ? Set(["q", "fields", "spaces", "pageSize", "supportsAllDrives", "includeItemsFromAllDrives"])
             : Set(["q", "fields", "spaces", "pageSize", "supportsAllDrives", "includeItemsFromAllDrives", "pageToken"]))
-        && fields["fields"] == "nextPageToken,incompleteSearch,files(id,name,parents,trashed,size,md5Checksum,sha256Checksum)"
+        && ["nextPageToken,incompleteSearch,files(id,name,parents,trashed,size,md5Checksum,sha256Checksum)",
+            "nextPageToken,incompleteSearch,files(id,name,mimeType,parents,trashed)"].contains(fields["fields"] ?? "")
         && fields["spaces"] == "drive" && fields["pageSize"] == "100"
         && fields["supportsAllDrives"] == "true" && fields["includeItemsFromAllDrives"] == "true"
 }

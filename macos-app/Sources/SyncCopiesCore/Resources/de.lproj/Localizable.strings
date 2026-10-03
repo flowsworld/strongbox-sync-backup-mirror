@@ -360,3 +360,14 @@
 "Retry credential cleanup" = "Zugangsdaten erneut bereinigen";
 
 "Cancel" = "Abbrechen";
+
+"Connected accounts automatically check copies in recognized local Drive folders. Other locations can be configured manually." = "Verbundene Konten prüfen Kopien in erkannten lokalen Drive-Ordnern automatisch. Andere Speicherorte lassen sich manuell einrichten.";
+"Automatically matched from the local Drive path." = "Automatisch anhand des lokalen Drive-Pfads zugeordnet.";
+"Other identical files exist in different Drive folders. Checks continue to use this location." = "Weitere identische Dateien liegen in anderen Drive-Ordnern. Die Prüfung verwendet weiterhin diesen Speicherort.";
+"Change folder manually" = "Ordner manuell ändern";
+"Use local Drive location" = "Lokalen Drive-Speicherort verwenden";
+"Connect the Google account used by this local Drive folder, or choose a folder manually." = "Verbinde das Google-Konto dieses lokalen Drive-Ordners oder wähle einen Ordner manuell.";
+"The local Drive path could not be matched uniquely. Choose a folder manually." = "Der lokale Drive-Pfad konnte nicht eindeutig zugeordnet werden. Wähle den Ordner manuell.";
+"The Drive location could not be checked. Retry or choose a folder manually." = "Der Drive-Speicherort konnte nicht geprüft werden. Versuche es erneut oder wähle den Ordner manuell.";
+
+"Google grants read access to metadata across all Drive files. The selected folder determines verification; the app also searches for identical copies elsewhere in this account." = "Google erlaubt Zugriff auf Metadaten aller Drive-Dateien. Der gewählte Ordner bestimmt die Prüfung; zusätzlich sucht die App nach identischen Kopien in anderen Ordnern dieses Kontos.";

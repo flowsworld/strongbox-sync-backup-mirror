@@ -10,9 +10,11 @@ struct DriveView: View {
         VStack(alignment: .leading, spacing: 20) {
             Text(L10n.text("Google Drive")).font(.title2).fontWeight(.semibold)
             Text(L10n.text("Optional: confirm that Google Drive has received your local copy.")).foregroundStyle(.secondary)
+            Text(L10n.text("Connected accounts automatically check copies in recognized local Drive folders. Other locations can be configured manually."))
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Text(L10n.text("The app reads file metadata only. It does not upload files, read cloud file contents or write to Google Drive."))
                 .fixedSize(horizontal: false, vertical: true)
-            Text(L10n.text("Google grants read access to metadata across all Drive files. Choosing a folder limits this app's queries, not Google's permission."))
+            Text(L10n.text("Google grants read access to metadata across all Drive files. The selected folder determines verification; the app also searches for identical copies elsewhere in this account."))
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if !drive.isAvailable {
                 Label(L10n.text(model.isDemo ? "Google Drive is disabled in the preview." : "Google Drive is not configured for this build."), systemImage: "info.circle")
@@ -68,7 +70,7 @@ struct DriveView: View {
                         DriveDatabaseView(database: database, drive: drive, demo: model.isDemo)
                     }
                     Button(L10n.text(drive.isChecking ? "Checking…" : "Check cloud now")) { drive.requestCheck() }
-                        .disabled(!drive.isAvailable || drive.bindings.isEmpty || drive.isChecking || model.isDemo || model.isChecking)
+                        .disabled(!drive.isAvailable || !drive.canRequestCheck || drive.isChecking || model.isDemo || model.isChecking)
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
             GroupBox(L10n.text("Cloud notifications")) {
@@ -108,13 +110,48 @@ private struct DriveDatabaseView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text(database.displayName).font(.headline)
             if let binding = drive.bindings[database.id] {
+                if let account = drive.accounts.first(where: { $0.id == binding.accountID }) {
+                    Text(account.label).font(.callout).foregroundStyle(.secondary)
+                }
                 Label(binding.folderName, systemImage: "folder").textSelection(.enabled)
+                if binding.automaticDestinationID != nil {
+                    Text(L10n.text("Automatically matched from the local Drive path."))
+                        .font(.callout).foregroundStyle(.secondary)
+                }
                 DriveStatusView(state: drive.results[database.id])
+                if drive.additionalCopyCounts[database.id] != nil {
+                    Text(L10n.text("Other identical files exist in different Drive folders. Checks continue to use this location."))
+                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
                 Button(L10n.text("Turn off cloud checking")) {
                     do { try drive.disable(databaseID: database.id); failure = nil }
                     catch { failure = L10n.text("Google Drive settings could not be saved or read.") }
                 }.disabled(demo || saving)
-            } else { Text(L10n.text("Cloud checking is off.")).foregroundStyle(.secondary) }
+                DisclosureGroup(L10n.text("Change folder manually")) { manualFolder }
+            } else {
+                Text(L10n.text("Cloud checking is off.")).foregroundStyle(.secondary)
+                if let problem = drive.automaticSetupProblems[database.id] {
+                    Text(L10n.text(problem.messageKey)).foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if drive.automaticCheckingDisabled.contains(database.id), drive.localDriveDatabaseIDs.contains(database.id) {
+                    Button(L10n.text("Use local Drive location")) {
+                        do { try drive.enableAutomatic(databaseID: database.id); failure = nil }
+                        catch { failure = L10n.text("Google Drive settings could not be saved or read.") }
+                    }.disabled(demo || saving || !drive.isAvailable || drive.accounts.isEmpty || drive.isChecking)
+                }
+                manualFolder
+            }
+            if let failure { Text(failure).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
+            Divider()
+        }
+        .task { updateSelection(drive.bindings[database.id]) }
+        .onChange(of: drive.bindings[database.id]) { updateSelection($0) }
+        .onChange(of: drive.accounts) { _ in updateSelection(drive.bindings[database.id]) }
+    }
+
+    private var manualFolder: some View {
+        VStack(alignment: .leading, spacing: 10) {
             Picker(L10n.text("Google account"), selection: $accountID) {
                 Text(L10n.text("Choose an account")).tag("")
                 ForEach(drive.accounts) { account in Text(account.label).tag(account.id) }
@@ -129,12 +166,14 @@ private struct DriveDatabaseView: View {
             }
             Text(L10n.format("The check looks for %@ in this folder. Choose the folder containing the synced copy.", database.filename))
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            if let failure { Text(failure).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
-            Divider()
         }
-        .task {
-            if let binding = drive.bindings[database.id] { accountID = binding.accountID; folderInput = binding.folderID }
-            else if drive.accounts.count == 1 { accountID = drive.accounts[0].id }
+    }
+
+    private func updateSelection(_ binding: DriveVerificationBinding?) {
+        guard !saving else { return }
+        if let binding { accountID = binding.accountID; folderInput = binding.folderID }
+        else if !drive.accounts.contains(where: { $0.id == accountID }) {
+            accountID = drive.accounts.count == 1 ? drive.accounts[0].id : ""
         }
     }
 

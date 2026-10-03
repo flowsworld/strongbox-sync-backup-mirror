@@ -360,3 +360,14 @@
 "Retry credential cleanup" = "Retry credential cleanup";
 
 "Cancel" = "Cancel";
+
+"Connected accounts automatically check copies in recognized local Drive folders. Other locations can be configured manually." = "Connected accounts automatically check copies in recognized local Drive folders. Other locations can be configured manually.";
+"Automatically matched from the local Drive path." = "Automatically matched from the local Drive path.";
+"Other identical files exist in different Drive folders. Checks continue to use this location." = "Other identical files exist in different Drive folders. Checks continue to use this location.";
+"Change folder manually" = "Change folder manually";
+"Use local Drive location" = "Use local Drive location";
+"Connect the Google account used by this local Drive folder, or choose a folder manually." = "Connect the Google account used by this local Drive folder, or choose a folder manually.";
+"The local Drive path could not be matched uniquely. Choose a folder manually." = "The local Drive path could not be matched uniquely. Choose a folder manually.";
+"The Drive location could not be checked. Retry or choose a folder manually." = "The Drive location could not be checked. Retry or choose a folder manually.";
+
+"Google grants read access to metadata across all Drive files. The selected folder determines verification; the app also searches for identical copies elsewhere in this account." = "Google grants read access to metadata across all Drive files. The selected folder determines verification; the app also searches for identical copies elsewhere in this account.";

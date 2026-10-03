@@ -588,6 +588,7 @@ final class AppModel: ObservableObject {
             let ready = sourceReadStatus == .available && preferences.globalFailure == nil &&
                 states[database.id]?.error == nil && states[database.id]?.checked != nil
             let identity = bookmark.map { SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined() } ?? "unconfigured"
+            let drivePath = bookmark.flatMap { try? resolveFolder($0) }.flatMap { GoogleDriveLocalPath(directory: $0.url) }
             return DriveLocalInput(id: database.id, name: database.displayName, filename: database.filename,
                                    destinationID: identity, makeSnapshot: {
                 guard ready, let bookmark else { throw UploadVerificationFailure.localFileUnavailable }
@@ -601,7 +602,7 @@ final class AppModel: ObservableObject {
                         }.value
                     })
                 }.value
-            })
+            }, drivePath: drivePath)
         }
     }
 
