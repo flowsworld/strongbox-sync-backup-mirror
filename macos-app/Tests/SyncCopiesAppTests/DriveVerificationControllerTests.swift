@@ -230,6 +230,29 @@ struct DriveVerificationControllerTests {
         #expect(controller.failure == nil)
     }
 
+    @Test(arguments: [false, true])
+    func accountListingFailuresIgnoreLocallyDisabledBindings(restarted: Bool) async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        await fixture.server.set(remote: try fixture.matching())
+        var controller = fixture.controller()
+        try await fixture.bind(controller)
+        fixture.localEnabled = false
+        if restarted { controller = fixture.controller() }
+        await fixture.server.setListingFailure(true)
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(controller.bindings[fixture.id] != nil)
+        #expect(controller.results.isEmpty)
+        #expect(fixture.delivered.isEmpty)
+        #expect(fixture.history.filter { $0.kind == .error }.isEmpty)
+        fixture.localEnabled = true
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(controller.results[fixture.id]?.status == .error(.credentialsUnavailable))
+        #expect(fixture.delivered.map(\.kind) == [.error])
+    }
+
     @Test func busyAccountMutationDefersCloudChecksWithoutAFalseCredentialAlert() async throws {
         let fixture = try DriveControllerFixture()
         defer { fixture.remove() }

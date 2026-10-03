@@ -407,28 +407,38 @@ final class DriveVerificationController: ObservableObject {
         validatedCopies.removeAll()
         results = [:]
         let inputs: [DriveLocalInput]
+        do { inputs = try environment.localInputs() }
+        catch {
+            guard captured == generation, !Task.isCancelled else { return }
+            if error as? GoogleDriveAccountFailure == .busy { return }
+            for id in activeDatabaseIDs where settings.bindings[id] != nil {
+                await recordResult(id: id, name: "Database", context: nil, local: nil,
+                                   outcome: .failure(Self.problem(error)), generation: captured)
+            }
+            return
+        }
+        // Resolve current local selections before any suspended account lookup.
+        // Retained bindings for disabled or removed databases are inactive.
+        let active = Set(inputs.map(\.id))
+        activeDatabaseIDs = active
+        cancelScheduled { !active.contains($0.databaseID) }
+        publish()
         do {
             let current = try await environment.listAccounts()
             let pending = try await environment.credentialCleanupStatus?() ?? false
             guard captured == generation, !Task.isCancelled else { return }
             if current != accounts { accounts = current }
             cleanupPending = pending
-            inputs = try environment.localInputs()
             if failure == .accountUnavailable { failure = nil }
         } catch {
             guard captured == generation, !Task.isCancelled else { return }
             if error as? GoogleDriveAccountFailure == .busy { return }
-            for id in settings.bindings.keys {
-                await recordResult(id: id, name: "Database", context: nil, local: nil,
+            for input in inputs where settings.bindings[input.id] != nil {
+                await recordResult(id: input.id, name: input.name, context: nil, local: nil,
                                    outcome: .failure(Self.problem(error)), generation: captured)
             }
             return
         }
-        // An input is present only while its local database and copy selection are enabled.
-        let active = Set(inputs.map(\.id))
-        activeDatabaseIDs = active
-        cancelScheduled { !active.contains($0.databaseID) }
-        publish()
         for input in inputs {
             guard captured == generation, !Task.isCancelled else { return }
             guard let binding = settings.bindings[input.id],
