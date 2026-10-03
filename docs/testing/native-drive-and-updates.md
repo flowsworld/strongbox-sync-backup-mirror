@@ -13,8 +13,8 @@ Sparkle 2.10.0. Development and Store builds exclude Sparkle and its helpers.
 
 ## Automated and packaging results
 
-At source revision `5c11751`, all 222 Swift test functions passed: 89 core
-Swift Testing tests, 98 app Swift Testing tests and 35 XCTest tests. All 116
+At source revision `0a269b2`, all 223 Swift test functions passed: 89 core
+Swift Testing tests, 99 app Swift Testing tests and 35 XCTest tests. All 116
 Python tests passed. Shell syntax checks passed for repository scripts, and
 Bash syntax plus ShellCheck passed for the prepared local Google wizard.
 
@@ -27,7 +27,7 @@ Bash syntax plus ShellCheck passed for the prepared local Google wizard.
 | Detached launch | English, German and French fallback demo processes remained running without `.build` resources |
 | Store fixture at `8b746fa` | Universal build passed; no Sparkle linkage/framework, SU settings or updater Mach entitlement; signature verified |
 | Direct fixture at `8b746fa` | Universal build with synthetic client/feed passed; exact Sparkle 2.10.0, nested helper signatures verified, Downloader excluded, profile reporting off |
-| Direct compilation | Swift 6 typechecks passed at `5c11751` for arm64 and x86_64 at macOS 13 with Sparkle 2.10.0 |
+| Direct compilation | Swift 6 typechecks passed at `0a269b2` for arm64 and x86_64 at macOS 13 with Sparkle 2.10.0 |
 | Privacy manifest | Embedded file timestamp and elapsed-time declarations validated; no tracking or developer-collected data declared |
 
 The direct fixture used an official archive whose SHA-256 matched the pinned
@@ -104,6 +104,9 @@ Cloud checks pause through sign-in and complete rollback. Temporary credential
 ownership during cleanup or another disconnect defers verification without
 false error/recovery notifications; the next scheduled or explicit check retries.
 Saving cloud results cannot erase an unrelated sign-in or account warning.
+Current local selections are resolved before suspended account lookups. Failed
+account loading cannot notify or publish results for inactive saved bindings,
+including after restart; re-enabled bindings resume normal error reporting.
 Each verified defect has a focused regression test. The last local full Codex
 run was interrupted by its usage limit and is not counted as completed. GitHub
 Codex reviews are requested only after current CI passes.
