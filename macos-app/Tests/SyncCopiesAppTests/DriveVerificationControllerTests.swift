@@ -17,6 +17,7 @@ private actor DriveServerFixture {
     var connectionBlocked = false
     var connectionSuspended: CheckedContinuation<Void, Never>?
     var connectionCancellations = 0
+    var connectionRollbackFails = false
     var disconnects = 0
     var connected = true
     var cleanupPending = false
@@ -28,11 +29,13 @@ private actor DriveServerFixture {
         return accounts()
     }
     func accounts() -> [GoogleDriveAccount] { connected ? (listed.isEmpty ? [account] : listed) : [] }
-    func connect() async -> GoogleDriveAccount {
+    func connect() async throws -> GoogleDriveAccount {
         if connectionBlocked { await withCheckedContinuation { connectionSuspended = $0 } }
+        if connectionRollbackFails { throw GoogleDriveAccountFailure.rollbackFailed }
         return account
     }
     func blockConnection() { connectionBlocked = true }
+    func failConnectionRollback() { connectionRollbackFails = true }
     func releaseConnection() { connectionBlocked = false; connectionSuspended?.resume(); connectionSuspended = nil }
     func cancelConnection() { connectionCancellations += 1 }
     func disconnect() { disconnects += 1; connected = false }
@@ -132,7 +135,7 @@ private final class DriveControllerFixture {
         return DriveVerificationEnvironment(listAccounts: {
             if let cleanupGate { await cleanupGate.wait() }
             return try await server.list()
-        }, connect: { await server.connect() },
+        }, connect: { try await server.connect() },
             cancelConnect: { await server.cancelConnection() }, disconnect: { _ in await server.disconnect() }, resolveFolder: { _, id in try await server.folder(id) },
             remoteFile: { _, _, _ in try await server.query() }, localInputs: { [self] in
                 if let catalogFailure { throw catalogFailure }
@@ -222,6 +225,29 @@ struct DriveVerificationControllerTests {
         #expect(await shutdown.value)
         #expect(controller.accounts.isEmpty)
         #expect(controller.failure == nil)
+    }
+
+    @Test func cancelledSignInReportsAFailedCredentialRollback() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        await fixture.server.blockConnection()
+        await fixture.server.failConnectionRollback()
+        let controller = fixture.controller()
+        controller.connect()
+        for _ in 0..<10_000 {
+            if await fixture.server.connectionSuspended != nil { break }
+            await Task.yield()
+        }
+        try #require(await fixture.server.connectionSuspended != nil)
+        controller.cancelConnect()
+        await fixture.server.releaseConnection()
+        for _ in 0..<10_000 {
+            if controller.failure == .connectionFailed { break }
+            await Task.yield()
+        }
+        #expect(controller.failure == .connectionFailed)
+        #expect(!controller.isConnecting)
+        #expect(await controller.quiesceAndPersist())
     }
 
     @Test func successfulCompleteRefreshClearsAnEarlierAccountFailureWithoutBindings() async throws {

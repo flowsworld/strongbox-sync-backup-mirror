@@ -194,7 +194,12 @@ final class DriveVerificationController: ObservableObject {
                 await start()
                 requestCheck()
             } catch {
-                if !Task.isCancelled, captured == connectionGeneration { failure = .connectionFailed }
+                // Cancelled sign-in can still fail to restore credentials. Keep
+                // that failure visible while ordinary cancellation stays quiet.
+                if error as? GoogleDriveAccountFailure == .rollbackFailed,
+                   captured == connectionGeneration || captured &+ 1 == connectionGeneration {
+                    failure = .connectionFailed
+                } else if !Task.isCancelled, captured == connectionGeneration { failure = .connectionFailed }
             }
             guard captured == connectionGeneration else { return }
             isConnecting = false
