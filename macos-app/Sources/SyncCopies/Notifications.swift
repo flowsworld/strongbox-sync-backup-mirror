@@ -17,6 +17,7 @@ struct NotificationOperations {
 final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     private var inFlight: [WritableKeyPath<NotificationPreferences, Bool>: Set<String>] = [:]
     private var prefixes: [WritableKeyPath<NotificationPreferences, Bool>: String] = [:]
+    private var driveAttempts: [UUID: UUID] = [:]
     var onSelectDatabase: ((String) -> Void)?
     private(set) var status = L10n.text("Not checked yet")
     private(set) var isAuthorized = false
@@ -124,6 +125,31 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         if let prefix = prefixes.removeValue(forKey: kind) { operations.cancelPending(prefix) }
     }
 
+    func sendDrive(id: UUID, title: String, body: String, databaseID: String) async throws {
+        let attempt = UUID()
+        driveAttempts[id] = attempt
+        defer { if driveAttempts[id] == attempt { driveAttempts.removeValue(forKey: id) } }
+        guard [.authorized, .provisional].contains(await authorizationStatus()) else {
+            throw FolderPermissionError.notificationsDenied
+        }
+        guard !Task.isCancelled, driveAttempts[id] == attempt else { return }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        content.userInfo["databaseID"] = databaseID
+        let identifier = "drive:" + id.uuidString
+        let request = UNNotificationRequest(identifier: identifier, content: content,
+                                            trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false))
+        try await operations.add(request)
+        if Task.isCancelled || driveAttempts[id] != attempt { operations.removePending([identifier]) }
+    }
+
+    func cancelDrive(id: UUID) {
+        driveAttempts.removeValue(forKey: id)
+        operations.removePending(["drive:" + id.uuidString])
+    }
+
     func selectDatabase(_ id: String?) {
         guard let id, UUID(uuidString: id) != nil else { return }
         onSelectDatabase?(id)
@@ -162,4 +188,3 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         completionHandler()
     }
 }
-

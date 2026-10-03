@@ -5,6 +5,7 @@ import SyncCopiesCore
 struct SettingsView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var updates: AppUpdates
+    @ObservedObject var drive: DriveVerificationController
 
     var body: some View {
         HStack(spacing: 0) {
@@ -40,7 +41,7 @@ struct SettingsView: View {
         case .general: general
         case .databases: databases
         case .notifications: notifications
-        case .googleDrive: googleDrive
+        case .googleDrive: DriveView(model: model, drive: drive)
         case .history: history
         case .info: InfoView(updates: updates)
         }
@@ -158,7 +159,8 @@ struct SettingsView: View {
                     if let date = preferences.lastCopied { detail(L10n.text("Last successful copy"), L10n.date(date)) }
                     if let date = state?.checked { detail(L10n.text("Last check"), L10n.date(date)) }
                     if let size = state?.backup?.size { detail(L10n.text("File size"), L10n.size(size)) }
-                    detail(L10n.text("Cloud check"), L10n.text("Unavailable in this version"))
+                    if drive.bindings[database.id] != nil { DriveStatusView(state: drive.results[database.id]) }
+                    else { detail(L10n.text("Cloud check"), L10n.text("Cloud checking is off.")) }
                 }.padding(.top, 10).font(.callout)
             }
         }
@@ -219,21 +221,6 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 5) {
             Toggle(title, isOn: Binding(get: { model.preferences.notifications[keyPath: key] }, set: { model.setNotification(key, to: $0) })).toggleStyle(.checkbox)
             Text(description).font(.callout).foregroundStyle(.secondary).padding(.leading, 22)
-        }
-    }
-
-    private var googleDrive: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            heading(L10n.text("Google Drive"), L10n.text("The optional upload check is coming in an update."))
-            GroupBox {
-                VStack(alignment: .leading, spacing: 12) {
-                    Label(L10n.text("Planned update"), systemImage: "checkmark.icloud").font(.headline)
-                    Text(L10n.text("The check will compare the cloud file with the local read-only copy. The app does not upload files itself."))
-                    Text(L10n.text("The update will also let you choose notifications for check errors, overdue uploads and verified cloud files."))
-                        .foregroundStyle(.secondary)
-                }.frame(maxWidth: .infinity, alignment: .leading).padding(6)
-            }
-            Text(L10n.text("In this version, a successful copy confirms only the local file in the destination folder.")).font(.callout).foregroundStyle(.secondary)
         }
     }
 

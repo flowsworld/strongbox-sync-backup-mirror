@@ -1,5 +1,8 @@
 # Remaining-work preparation checks
 
+This is the historical preparation pass. The completed native integration and
+its latest evidence are recorded in [native Drive and updates](native-drive-and-updates.md).
+
 Tested on 2026-10-02 with code revision `22f0de7`, macOS 27.0.1 on Apple Silicon,
 Xcode 27.0 and Swift 6.4. This covers the verification core and local packaging
 prepared for #9–#11. Flo explicitly deferred #10 because an Apple Developer

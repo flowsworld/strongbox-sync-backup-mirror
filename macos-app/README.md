@@ -173,18 +173,22 @@ im Bericht.
 Die Vorbereitung für Google Drive, Release-Bau und Updates ist dokumentiert:
 
 - [Native Google-Drive-Prüfung](../docs/research/native-google-drive-verification.md),
-  mit einem getesteten providerneutralen Prüfkern. OAuth, Drive-Adapter und
-  App-Integration sind noch nicht enthalten.
+  mit getestetem Prüfkern, Desktop-OAuth, getrennten Zugangsdaten, Drive-Adapter
+  und App-Integration. Die echte Provider-Prüfung fehlt noch.
 - [Release-Vorbereitung](../docs/research/macos-release-preparation.md),
   mit `zsh macos-app/release.zsh development VERSION BUILD` für einen isolierten
   Universal-Kandidaten. Ein Ad-hoc-Build ist keine signierte Beta.
 - [Store- und Direkt-Updates](../docs/research/macos-update-distribution.md),
   mit Sparkle-Recherche und den noch offenen signierten Integrationstests.
 - [Oberflächenvarianten für die offenen Aufgaben](https://pages.diesis.cloud/d/sm01ct3cwj0o).
-  Ihre Auswahl steht vor Änderungen an der echten Oberfläche.
+  Flo hat Drive A mit mehreren Konten, Updates A auf der Info-Seite,
+  ersten Start B und Icon C gewählt. Diese Varianten sind umgesetzt.
 
-Die optionale Google-Drive-Prüfung folgt in einem Update. Diese Fassung bestätigt
-nur die lokale Kopie. Flos vollständiger Umstieg wartet auf die Google-Drive-Prüfung.
+Die optionale Google-Drive-Prüfung ist implementiert. Sie braucht einen eigenen
+Desktop-OAuth-Client. Die [Einrichtung](../docs/manual/native-google-setup.md) ist
+vorbereitet; ohne Client-Konfiguration bleibt sie deaktiviert. Der tatsächliche
+Google-Zugriff und der geschützte Keychain-Zugriff mit gültiger Signierung sind noch
+zu prüfen. Flos vollständiger Umstieg wartet auf diese Prüfung.
 
 Produktionssignierung und App-Store-Paket, App-Store-Prüfung, Login und Wake im
 Dauerbetrieb, entzogene Ordnerfreigaben, macOS-Versionsabdeckung und Tests mit

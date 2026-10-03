@@ -58,6 +58,10 @@ trap 'exit 130' HUP INT TERM
     print -u2 'That release already exists. Choose a new build number.'; exit 1
 }
 typeset -a update_flags=()
+typeset -a google_flags=()
+if [[ -n "${DIESIS_GOOGLE_CLIENT_CONFIG:-}" ]]; then
+    google_flags=(--google-client-config "$DIESIS_GOOGLE_CLIENT_CONFIG")
+fi
 if [[ "$channel" == direct ]]; then
     [[ -n "${DIESIS_UPDATE_FEED_URL:-}" && -n "${DIESIS_UPDATE_PUBLIC_KEY:-}" ]] || {
         print -u2 'Direct release candidates require DIESIS_UPDATE_FEED_URL and DIESIS_UPDATE_PUBLIC_KEY.'; exit 2
@@ -68,7 +72,7 @@ elif [[ "$channel" == store && -n "${DIESIS_STORE_URL:-}" ]]; then
 fi
 staging=$(mktemp -d "$release_root/.package.XXXXXXXX")
 app_bundle="$staging/Sync-Kopien.app"
-/bin/zsh "$app_dir/build.zsh" --universal --distribution "$channel" "${update_flags[@]}" --output "$app_bundle"
+/bin/zsh "$app_dir/build.zsh" --universal --distribution "$channel" "${update_flags[@]}" "${google_flags[@]}" --output "$app_bundle"
 plist="$app_bundle/Contents/Info.plist"
 plutil -replace CFBundleShortVersionString -string "$version" "$plist"
 plutil -replace CFBundleVersion -string "$build_number" "$plist"

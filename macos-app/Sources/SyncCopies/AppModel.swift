@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import CryptoKit
 import Darwin
 import SyncCopiesCore
 
@@ -142,6 +143,8 @@ final class AppModel: ObservableObject {
     private var instanceLock: InstanceLock?
     private var scanTask: Task<Void, Never>?
     var onOpenSettings: (() -> Void)?
+    var onLocalScanStarted: (() -> Void)?
+    var onLocalScanComplete: (() -> Void)?
     private let preferencesURL: URL
     private var persistenceFailed = false
     private var loadFailed = false
@@ -149,7 +152,7 @@ final class AppModel: ObservableObject {
     private var scanAgain = false
     private var generation = 0
     private var updatePreparationGeneration = 0
-    private var isTerminating = false
+    private(set) var isTerminating = false
     private var sourceScope: FolderAccess?
     private var monitoredPaths: Set<String> = []
     private var monitor: FileMonitor?
@@ -280,6 +283,7 @@ final class AppModel: ObservableObject {
                 readOnly: true
             ) else { return }
             preferences.source = bookmark
+            invalidateCloudCopies()
             rememberBookmarkPath(bookmark, mounts: folderMounts())
             sourceReadStatus = .notGranted
             generation += 1
@@ -301,6 +305,7 @@ final class AppModel: ObservableObject {
                 item.target = bookmark
                 preferences.databases[database.id.uuidString] = item
             } else { preferences.defaultTarget = bookmark }
+            invalidateCloudCopies()
             rememberTargetPaths()
             generation += 1
             if save() { refresh() }
@@ -312,6 +317,7 @@ final class AppModel: ObservableObject {
         var item = preference(for: database)
         item.target = nil
         preferences.databases[database.id.uuidString] = item
+        invalidateCloudCopies()
         generation += 1
         if save() { refresh() }
     }
@@ -325,6 +331,7 @@ final class AppModel: ObservableObject {
             pendingNotifications.removeAll { $0.databaseID == database.id.uuidString }
         }
         preferences.databases[database.id.uuidString] = item
+        invalidateCloudCopies()
         generation += 1
         if save() { refresh() }
     }
@@ -474,6 +481,7 @@ final class AppModel: ObservableObject {
         if persistenceFailed, !save() { return }
         guard !isChecking else { scanAgain = true; return }
         isChecking = true
+        onLocalScanStarted?()
         sourceReadStatus = .checking
         let snapshot = preferences
         let previousPaths = folderPaths
@@ -557,9 +565,64 @@ final class AppModel: ObservableObject {
             if !isStopping { await deliverNotifications() }
             isChecking = false
             scanTask = nil
+            if !isStopping { onLocalScanComplete?() }
             if scanAgain, !isStopping { scanAgain = false; refresh() }
         }
     }
+
+    var driveSettingsDirectory: URL {
+        preferencesURL.deletingLastPathComponent().appendingPathComponent("google-drive", isDirectory: true)
+    }
+
+    private func invalidateCloudCopies() {
+        states = [:]
+        onLocalScanStarted?()
+    }
+
+    /// Each check holds both the exact copied inode and its scoped folder grant.
+    func driveLocalInputs() -> [DriveLocalInput] {
+        guard !isDemo, !isChecking, let environment else { return [] }
+        let resolveFolder = environment.resolveFolder
+        return databases.filter { preference(for: $0).enabled }.map { database in
+            let bookmark = preference(for: database).target ?? preferences.defaultTarget
+            let ready = sourceReadStatus == .available && preferences.globalFailure == nil &&
+                states[database.id]?.error == nil && states[database.id]?.checked != nil
+            let identity = bookmark.map { SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined() } ?? "unconfigured"
+            return DriveLocalInput(id: database.id, name: database.displayName, filename: database.filename,
+                                   destinationID: identity, makeSnapshot: {
+                guard ready, let bookmark else { throw UploadVerificationFailure.localFileUnavailable }
+                return try await Task.detached(priority: .utility) {
+                    let folder = try resolveFolder(bookmark)
+                    let snapshot = try UploadFingerprint.snapshot(directory: folder.url, filename: database.filename)
+                    return DriveLocalSnapshot(fingerprint: snapshot.fingerprint, validate: {
+                        try await Task.detached(priority: .utility) {
+                            try snapshot.validate()
+                            withExtendedLifetime(folder) {}
+                        }.value
+                    })
+                }.value
+            })
+        }
+    }
+
+    func recordDriveEvent(_ event: DriveVerificationEvent) {
+        guard !isDemo, !loadFailed else { return }
+        preferences.history.insert(HistoryEntry(date: Date(), databaseID: event.databaseID,
+                                               name: event.databaseName, message: event.message,
+                                               isError: event.kind == .error || event.kind == .overdue), at: 0)
+        _ = save()
+    }
+
+    func deliverDriveEvent(_ event: DriveVerificationEvent) async throws -> DriveNotificationDelivery {
+        guard let notifications else { return .permissionDenied }
+        do {
+            try await notifications.sendDrive(id: event.id, title: L10n.format("%@: Google Drive", event.databaseName),
+                                              body: event.message.rendered(), databaseID: event.databaseID.uuidString)
+            return .delivered
+        } catch FolderPermissionError.notificationsDenied { return .permissionDenied }
+    }
+
+    func cancelDriveNotification(_ id: UUID) { notifications?.cancelDrive(id: id) }
 
     private nonisolated static func sourceFailureStatus(_ error: any Error) -> SourceReadStatus {
         switch error as? MirrorError {

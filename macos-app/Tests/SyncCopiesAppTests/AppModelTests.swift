@@ -112,7 +112,46 @@ private final class ResolutionGate: @unchecked Sendable {
 }
 
 @MainActor
+private final class ModelNotificationGate {
+    var entered = false
+    private var continuation: CheckedContinuation<Void, Never>?
+    func wait() async {
+        entered = true
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func release() { continuation?.resume(); continuation = nil }
+}
+
+@MainActor
 struct AppModelTests {
+    @Test func abortedInstallerCannotResumeProviderDuringTerminationWait() async throws {
+        let fixture = try ModelFixture()
+        let gate = ResolutionGate()
+        let base = fixture.environment()
+        let resolve = base.resolveFolder
+        let environment = AppEnvironment(preferencesURL: base.preferencesURL, resolveFolder: { data in
+            if data == Data("source".utf8), !gate.hasEntered { gate.wait() }
+            return try resolve(data)
+        }, scheduler: base.scheduler, notifications: nil, loginStatus: base.loginStatus, setLogin: base.setLogin)
+        let model = AppModel(environment: environment)
+        defer { gate.release.signal() }
+        try #require(try await eventually { gate.hasEntered })
+        let drive = DriveVerificationController(settingsURL: fixture.root.appendingPathComponent("drive.json"), environment: nil)
+        let preparation = AppUpdatePreparation(model: model, drive: drive)
+        #expect(await drive.quiesceAndPersist())
+        let stop = Task { await model.quiesceForTermination() }
+        try #require(try await eventually { model.isStopping })
+        preparation.resume()
+        #expect(!drive.canChangeSettings)
+        gate.release.signal()
+        await stop.value
+        #expect(!drive.canChangeSettings)
+        model.cancelTermination()
+        preparation.resume()
+        #expect(drive.canChangeSettings)
+        await model.shutdown()
+    }
+
     @Test func abortedInstallerCannotResumeCopiesDuringTerminationWait() async throws {
         let fixture = try ModelFixture()
         let gate = ResolutionGate()
@@ -198,6 +237,47 @@ struct AppModelTests {
         await model.shutdown()
     }
 
+    @Test func existingMatchingCopyIsEligibleForCloudVerificationWithoutAnAppWrite() async throws {
+        let fixture = try ModelFixture()
+        let target = fixture.common.appendingPathComponent(fixture.first.filename)
+        try Data("first encrypted fixture".utf8).write(to: target)
+        let model = AppModel(environment: fixture.environment())
+        try await settled(model)
+        #expect(model.preference(for: fixture.first).lastCopied == nil)
+        #expect(model.states[fixture.first.id]?.error == nil)
+        let input = try #require(model.driveLocalInputs().first { $0.id == fixture.first.id })
+        let snapshot = try await input.makeSnapshot()
+        #expect(snapshot.fingerprint.size == Int64(Data("first encrypted fixture".utf8).count))
+        try await snapshot.validate()
+        await model.shutdown()
+    }
+
+    @Test func cloudCompletionRunsAfterSuspendedLocalNotificationAndClearedCheckingFlag() async throws {
+        let fixture = try ModelFixture()
+        var settings = try JSONDecoder().decode(Preferences.self, from: Data(contentsOf: fixture.preferencesURL))
+        settings.notifications.copies = true
+        try JSONEncoder().encode(settings).write(to: fixture.preferencesURL)
+        let gate = ModelNotificationGate()
+        let notifications = NotificationService(operations: NotificationOperations(
+            authorization: { .authorized }, requestAuthorization: { true },
+            add: { _ in if !gate.entered { await gate.wait() } },
+            removePending: { _ in }, cancelPending: { _ in }, discardPending: {}
+        ))
+        let model = AppModel(environment: fixture.environment(notifications: notifications))
+        var readyAtCompletion = false
+        model.onLocalScanComplete = { [weak model] in
+            guard let model else { return }
+            readyAtCompletion = !model.isChecking && !model.driveLocalInputs().isEmpty
+        }
+        try #require(try await eventually { gate.entered })
+        #expect(model.isChecking)
+        #expect(!readyAtCompletion)
+        gate.release()
+        try await settled(model)
+        #expect(readyAtCompletion)
+        await model.shutdown()
+    }
+
     @Test func wrongSavedSourceAllowsCorrectionAndPreservesExistingCopy() async throws {
         let fixture = try ModelFixture()
         let target = fixture.common.appendingPathComponent(fixture.first.filename)
@@ -263,6 +343,25 @@ struct AppModelTests {
         #expect(!(await first.value))
         #expect(await second.value)
         #expect(model.isStopping)
+        await model.shutdown()
+    }
+
+    @Test func failedSelectionSaveInvalidatesCloudInputBeforeRescanning() async throws {
+        let fixture = try ModelFixture()
+        let model = AppModel(environment: fixture.environment())
+        try await settled(model)
+        #expect(!model.driveLocalInputs().isEmpty)
+        var invalidations = 0
+        model.onLocalScanStarted = { invalidations += 1 }
+        let settingsDirectory = fixture.preferencesURL.deletingLastPathComponent()
+        try FileManager.default.removeItem(at: settingsDirectory)
+        try Data("blocked settings directory".utf8).write(to: settingsDirectory)
+        model.useCommonTarget(for: fixture.second)
+        #expect(invalidations == 1)
+        #expect(model.states.isEmpty)
+        let input = try #require(model.driveLocalInputs().first { $0.id == fixture.second.id })
+        await #expect(throws: UploadVerificationFailure.localFileUnavailable) { try await input.makeSnapshot() }
+        #expect(model.problem != nil)
         await model.shutdown()
     }
 

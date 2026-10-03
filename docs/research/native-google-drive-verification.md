@@ -97,7 +97,7 @@ Local copying remains the first independent operation. A completed local copy re
 
 ## Notifications and persistence
 
-Add four independent preferences for check errors, overdue uploads, recovery and confirmed cloud matches. Preserve local-copy preferences separately. Proposed defaults enable problems, with recovery and confirmation optional, matching the app's existing local-notification choices. Final wording and layout require Flo's static-mock selection.
+The approved Drive A page has four independent preferences for check errors, overdue uploads, recovery and confirmed cloud matches. Local-copy preferences remain separate. Errors, overdue uploads and recovery default on; confirmation defaults off. Flo selected the mocks and requested multiple accounts.
 
 Deduplicate errors by typed problem code and context, not timestamps or local content. Deduplicate overdue alerts while the same content/context stays overdue. A repeated confirmed check refreshes its timestamp without producing another success event. A first confirmation for new content is eligible for confirmation notification. A successful check after an error is eligible for recovery even when the file is still pending; do not call it a confirmed cloud match. A recovered-and-confirmed observation may carry both facts, but should produce a single chosen notification rather than two alerts.
 
@@ -126,11 +126,23 @@ Automated tests must use synthetic metadata/files and a fake credential store. N
 | Provider-neutral typed metadata and state transitions | Implemented with synthetic public-behavior tests | Independent diff review and final full-suite run |
 | Drive folder search/parser and request policy | Yes | Synthetic automated tests and independent diff review |
 | HTTP/Keychain/browser adapters | Yes, as code with fake boundaries | Unit tests; signed OS integration remains separate |
-| Public setup and notification UI | Static alternatives can be prepared | Flo chooses the published mocks before changing real components |
-| Owned OAuth project and Desktop client | No account configuration has been inspected or changed | Named project owner, separate project IDs and configured clients |
+| Public setup and notification UI | Implemented from approved Drive A with multiple accounts | Independent review and isolated visual checks |
+| Owned OAuth project and Desktop client | Flo confirmed none exists; setup is prepared | Run the local wizard and provide the explicit native client configuration |
 | Google production verification | No | Published branding, accepted restricted-scope justification and any required assessment |
 | Production Keychain and sandbox callback | No signing identity/profile has been established here | Correctly signed bundle, save/read/relaunch/delete, cancelled/failed setup, lock/wake/reboot and loopback callback tests |
 | Actual Drive validation | Requires explicit authorization for that validation | Dated report identifying scope and synthetic cloud fixtures, with no database content download or Drive mutation |
 | Full migration from helper | Outside #9 authorization | Separate migration/uninstall request after native verification works |
 
-The account owner, project IDs, verification outcome and production signing configuration are unknown, not assumed missing. No real credentials were loaded, no Google account changes were made and no actual provider validation ran during this investigation or the synthetic core tests. Issue #9 remains open until setup, app integration, independent notifications and the required validation are complete. The completed core is partial preparation and is not wired into the running app.
+The native implementation is wired into the running app, using a separate Keychain service and registry. Builds require explicit Desktop client configuration; absent configuration and previews have no provider effects. The safe configuration parser accepts only three native keys, never executes shell text and rejects symlinks, oversized files and FIFOs. [Setup instructions](../manual/native-google-setup.md) describe the prepared local wizard.
+
+Flo confirmed that no Google project or Apple signing account exists and requested preparation. No real credentials were loaded, no Google account changes were made and no actual provider validation ran. Issue #9 remains open for signed Keychain/browser integration and actual synthetic Drive validation. Automated tests use injected provider, credential, callback and notification boundaries; they do not establish production account access.
+
+## Native readiness timer privacy declaration
+
+The native readiness probe uses `ProcessInfo.systemUptime` only to bound elapsed
+waiting time on the Mac. The privacy manifest declares
+`NSPrivacyAccessedAPICategorySystemBootTime` with reason `35F9.1`. Boot-time values
+and derived timing are not added to provider or update requests. This follows
+Apple's elapsed-time/timer reason. Checked on 2026-10-03 against
+[Apple's required-reason API inventory](https://developer.apple.com/documentation/bundleresources/app-privacy-configuration/nsprivacyaccessedapitypes/nsprivacyaccessedapitype)
+and [systemUptime documentation](https://developer.apple.com/documentation/foundation/processinfo/systemuptime).
