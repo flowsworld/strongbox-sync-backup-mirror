@@ -76,6 +76,25 @@ private actor DriveAccountCleanupGate {
     }
 }
 
+private actor DriveDisconnectGate {
+    private var remaining: [GoogleDriveAccount]
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var busy = false
+    var entered: Bool { continuation != nil }
+    init(first: GoogleDriveAccount, second: GoogleDriveAccount) {
+        remaining = [first, second]
+    }
+    func list() -> [GoogleDriveAccount] { remaining }
+    func disconnect(_ id: String) async throws {
+        guard !busy else { throw GoogleDriveAccountFailure.busy }
+        busy = true
+        defer { busy = false }
+        remaining.removeAll { $0.id == id }
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func release() { continuation?.resume(); continuation = nil }
+}
+
 @MainActor
 private final class DriveControllerFixture {
     let root: URL
@@ -574,6 +593,53 @@ struct DriveVerificationControllerTests {
         }
         #expect(broken.bindings.isEmpty)
         #expect(fixture.delivered.map(\.kind) == [.confirmed])
+    }
+
+    @Test func rejectedConcurrentDisconnectPreservesTheOtherAccountBinding() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        let first = await fixture.server.account
+        let second = GoogleDriveAccount(identity: try GoogleDriveIdentity(drivePermissionID: "second-account"), credentialID: UUID())
+        let registry = DriveDisconnectGate(first: first, second: second)
+        let base = fixture.environment
+        let environment = DriveVerificationEnvironment(listAccounts: { await registry.list() }, connect: base.connect,
+            cancelConnect: base.cancelConnect, disconnect: { try await registry.disconnect($0) }, resolveFolder: base.resolveFolder,
+            remoteFile: base.remoteFile, localInputs: base.localInputs, deliver: base.deliver,
+            cancelNotification: base.cancelNotification, history: base.history, clock: base.clock)
+        let controller = DriveVerificationController(settingsURL: fixture.settingsURL, environment: environment)
+        await controller.start()
+        try await controller.selectFolder(databaseID: fixture.id, accountID: first.id, input: "root")
+        try await fixture.settle(controller)
+        let otherDatabase = UUID()
+        try await controller.selectFolder(databaseID: otherDatabase, accountID: second.id, input: "root")
+        try await fixture.settle(controller)
+        let original = try #require(controller.bindings[otherDatabase])
+        let disconnect = Task { try await controller.disconnect(accountID: first.id) }
+        for _ in 0..<10_000 {
+            if await registry.entered { break }
+            await Task.yield()
+        }
+        try #require(await registry.entered)
+        await #expect(throws: DriveControllerFailure.accountUnavailable) {
+            try await controller.disconnect(accountID: second.id)
+        }
+        #expect(controller.bindings[otherDatabase] == original)
+        #expect((await registry.list()).contains(second))
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(controller.results[fixture.id] == nil)
+        #expect(fixture.history.filter { $0.kind == .error }.isEmpty)
+        #expect(fixture.delivered.filter { $0.kind == .error }.isEmpty)
+        var changedPreferences = controller.preferences
+        changedPreferences.confirmed = true
+        try controller.setPreferences(changedPreferences)
+        await registry.release()
+        try await disconnect.value
+        #expect(controller.preferences == changedPreferences)
+        #expect(controller.bindings[fixture.id] == nil)
+        #expect(controller.bindings[otherDatabase] == original)
+        let reopened = fixture.controller()
+        #expect(reopened.bindings[otherDatabase] == original)
     }
 
     @Test func scheduledRecoveryCannotBecomeAnotherRecoveryAfterConfirmation() async throws {

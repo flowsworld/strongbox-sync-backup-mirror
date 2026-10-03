@@ -130,6 +130,7 @@ final class DriveVerificationController: ObservableObject {
     private var checkRequested = false
     @Published private var stopped = false
     private var mutations: [UUID: Task<Void, any Error>] = [:]
+    private var disconnectingAccounts: Set<String> = []
     private var activeDatabaseIDs: Set<UUID> = []
     private struct CurrentCopy {
         let context: UploadVerificationContext
@@ -268,15 +269,23 @@ final class DriveVerificationController: ObservableObject {
 
     private func disconnectAccount(_ accountID: String) async throws {
         guard let environment else { throw DriveControllerFailure.unavailable }
+        guard disconnectingAccounts.insert(accountID).inserted else { throw DriveControllerFailure.accountUnavailable }
+        defer {
+            disconnectingAccounts.remove(accountID)
+            requestCheck()
+        }
         invalidateChecks()
+        do { try await environment.disconnect(accountID) }
+        catch { failure = .accountUnavailable; throw DriveControllerFailure.accountUnavailable }
+        // Another account's mutation may reject this request. Change bindings
+        // only after disconnect succeeds, using settings current after the await.
         var next = settings
         let ids = next.bindings.filter { $0.value.accountID == accountID }.map(\.key)
         let pending = ids.flatMap { next.records[$0]?.pending ?? [] }
         for id in ids { next.bindings.removeValue(forKey: id); next.records.removeValue(forKey: id) }
         try commit(next)
         pending.forEach { environment.cancelNotification($0.id) }
-        do { try await environment.disconnect(accountID); await start() }
-        catch { failure = .accountUnavailable; throw DriveControllerFailure.accountUnavailable }
+        await start()
     }
 
     func setPreferences(_ preferences: DriveNotificationPreferences) throws {
@@ -411,7 +420,8 @@ final class DriveVerificationController: ObservableObject {
         publish()
         for input in inputs {
             guard captured == generation, !Task.isCancelled else { return }
-            guard let binding = settings.bindings[input.id] else { continue }
+            guard let binding = settings.bindings[input.id],
+                  !disconnectingAccounts.contains(binding.accountID) else { continue }
             let context: UploadVerificationContext
             do {
                 guard let account = accounts.first(where: { $0.id == binding.accountID }) else {
@@ -470,7 +480,8 @@ final class DriveVerificationController: ObservableObject {
 
     private func recordResult(id: UUID, name: String, context: UploadVerificationContext?, local: UploadLocalFingerprint?,
                               outcome: UploadCheckOutcome, generation captured: UInt64) async {
-        guard let environment, captured == generation, !Task.isCancelled, settings.bindings[id] != nil else { return }
+        guard let environment, captured == generation, !Task.isCancelled,
+              let binding = settings.bindings[id], !disconnectingAccounts.contains(binding.accountID) else { return }
         let previous = settings.records[id]
         let observedPrevious = previous?.awaitingFirstQuery == true ? nil : previous?.state
         let state = UploadVerification.evaluate(previous: observedPrevious, context: context, local: local,
@@ -590,7 +601,8 @@ final class DriveVerificationController: ObservableObject {
         bindings = settings.bindings
         preferences = settings.preferences
         results = settings.records.filter { id, record in
-            guard settings.bindings[id] != nil, activeDatabaseIDs.contains(id) else { return false }
+            guard let binding = settings.bindings[id], activeDatabaseIDs.contains(id),
+                  !disconnectingAccounts.contains(binding.accountID) else { return false }
             guard record.state.status == .confirmed else { return true }
             guard let current = validatedCopies[id] else { return false }
             return current.context == record.state.context && current.sha256 == record.state.localSHA256
