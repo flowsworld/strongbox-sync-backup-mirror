@@ -211,6 +211,13 @@ actor GoogleDriveAccounts {
         var registry = try loadRegistry()
         let original = registry
         let previous = registry.accounts.first { $0.drivePermissionID == identity.drivePermissionID }
+        if let previous, let refresh = refreshes[previous.credentialID] {
+            // The worker owns token rotation through its final Keychain write.
+            // Drain it before capturing rollback state. Its existing waiters
+            // report failures; a fresh authorization can still repair the account.
+            _ = await refresh.task.result
+            try Task.checkCancellation()
+        }
         let account = GoogleDriveAccount(identity: identity, credentialID: UUID())
         let payload = StoredCredentials(clientID: client.clientID, drivePermissionID: identity.drivePermissionID, refreshToken: tokens.refreshToken)
         registry.pendingRemovals.append(account.credentialID)
@@ -327,12 +334,16 @@ actor GoogleDriveAccounts {
             refreshes[account.credentialID] = existing
             refresh = existing
         } else {
+            // Existing workers may finish or gain waiters during a mutation, but
+            // a new worker cannot rotate a credential being staged or removed.
+            guard !mutationActive else { throw GoogleDriveAccountFailure.busy }
             let client = self.client, transport = self.transport, credentials = self.credentials, clock = self.clock
             let task = Task {
                 let data = try await credentials.read(account.credentialID)
                 let stored = try StoredCredentials.decode(data, clientID: client.clientID, account: account)
                 let response = try await transport.oauth(client.refreshRequest(refreshToken: stored.refreshToken))
-                return try GoogleDriveOAuthTokens.decodeResponse(response, existingRefreshToken: stored.refreshToken, receivedAt: clock())
+                let tokens = try GoogleDriveOAuthTokens.decodeResponse(response, existingRefreshToken: stored.refreshToken, receivedAt: clock())
+                return try await self.finishRefresh(account: account, tokens: tokens)
             }
             refresh = Refresh(id: UUID(), task: task, waiters: 1)
             refreshes[account.credentialID] = refresh
@@ -349,14 +360,25 @@ actor GoogleDriveAccounts {
         let tokens = try await refresh.task.value
         try requireCurrent(account)
         try Task.checkCancellation()
+        return tokens.accessToken
+    }
+
+    /// One shared worker persists rotation before any waiter or reconnect can
+    /// observe completion. Individual waiters never write credentials.
+    private func finishRefresh(account: GoogleDriveAccount, tokens: GoogleDriveOAuthTokens) async throws -> GoogleDriveOAuthTokens {
+        try Task.checkCancellation()
+        try requireCurrent(account)
         let stored = try await loadCredentials(account)
+        try requireCurrent(account)
+        try Task.checkCancellation()
         if tokens.refreshToken != stored.refreshToken {
             let updated = StoredCredentials(clientID: client.clientID, drivePermissionID: account.drivePermissionID, refreshToken: tokens.refreshToken)
             try await credentials.update(account.credentialID, JSONEncoder().encode(updated))
         }
         try requireCurrent(account)
-        cachedTokens[accountID] = tokens
-        return tokens.accessToken
+        try Task.checkCancellation()
+        cachedTokens[account.id] = tokens
+        return tokens
     }
 
     func remoteFile(accountID: String, folderID: String, filename: String) async throws -> UploadRemoteFile? {

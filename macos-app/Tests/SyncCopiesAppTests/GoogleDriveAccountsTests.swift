@@ -462,6 +462,87 @@ final class GoogleDriveAccountsTests: XCTestCase {
         XCTAssertEqual(Set(remaining.keys), [repaired.account.credentialID])
     }
 
+    func testCancelledReconnectPreservesAnInFlightRefreshRotation() async throws {
+        let directory = try directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let keychain = DriveCredentialFixture()
+        let snapshotGate = DriveCredentialReadGate()
+        let updateGate = DriveCredentialReadGate()
+        let base = keychain.store
+        let credentials = GoogleDriveCredentialStore(read: { id in
+            await snapshotGate.capture(try await base.read(id))
+        }, add: base.add, update: { id, data in
+            let updated = await updateGate.capture(data)
+            try await base.update(id, updated)
+        }, remove: base.remove)
+        let accounts = GoogleDriveAccounts(registryURL: directory.appendingPathComponent("accounts.json"), client: try client(), credentials: credentials,
+                                          transport: DriveHTTPFixture(outcomes: [.reply(200, #"{"access_token":"rotated-access","refresh_token":"rotated-refresh","expires_in":3600,"token_type":"Bearer"}"#)]).transport,
+                                          clock: { 3600 })
+        let previous = try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111"), tokens: tokens())
+        await updateGate.arm()
+        let refresh = Task { try await accounts.accessToken(accountID: previous.account.id) }
+        var deadline = Date().addingTimeInterval(2)
+        while !(await updateGate.entered), Date() < deadline { try await Task.sleep(for: .milliseconds(1)) }
+        let updateEntered = await updateGate.entered
+        XCTAssertTrue(updateEntered)
+        await snapshotGate.arm()
+        await keychain.suspendNextRemoval()
+        let reconnect = Task { try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111"), tokens: tokens(refresh: "replacement")) }
+        // A broken save captures the old credential before this update returns.
+        // A correct save waits for the worker, then captures the rotated value.
+        deadline = Date().addingTimeInterval(0.1)
+        while !(await snapshotGate.entered), Date() < deadline { try await Task.sleep(for: .milliseconds(1)) }
+        let beforeRotation = await keychain.snapshot()
+        XCTAssertEqual(Set(beforeRotation.keys), [previous.account.credentialID], "Reconnect must not stage credentials while rotation is unfinished")
+        await updateGate.release()
+        let refreshed = try await refresh.value
+        XCTAssertEqual(refreshed, "rotated-access")
+        let rotated = await keychain.snapshot()
+        let rotatedData = try XCTUnwrap(rotated[previous.account.credentialID])
+        XCTAssertTrue(String(decoding: rotatedData, as: UTF8.self).contains("rotated-refresh"))
+        deadline = Date().addingTimeInterval(2)
+        while !(await snapshotGate.entered), Date() < deadline { try await Task.sleep(for: .milliseconds(1)) }
+        let snapshotEntered = await snapshotGate.entered
+        XCTAssertTrue(snapshotEntered)
+        await snapshotGate.release()
+        deadline = Date().addingTimeInterval(2)
+        while !(await keychain.isRemovalSuspended), Date() < deadline { try await Task.sleep(for: .milliseconds(1)) }
+        let removalEntered = await keychain.isRemovalSuspended
+        XCTAssertTrue(removalEntered)
+        reconnect.cancel()
+        await keychain.releaseRemoval()
+        do { _ = try await reconnect.value; XCTFail("Cancelled reconnect committed") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        let restored = await keychain.snapshot()
+        XCTAssertEqual(restored[previous.account.credentialID], rotatedData)
+    }
+
+    func testReconnectDrainsFailedRefreshAndStillRepairsAuthorization() async throws {
+        let directory = try directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let keychain = DriveCredentialFixture()
+        let http = DriveSuspendedHTTPFixture(reply: GoogleDriveHTTPReply(statusCode: 403, body: Data()))
+        let accounts = GoogleDriveAccounts(registryURL: directory.appendingPathComponent("accounts.json"), client: try client(),
+                                          credentials: keychain.store, transport: http.transport, clock: { 3600 })
+        let previous = try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111"), tokens: tokens())
+        let refresh = Task { try await accounts.accessToken(accountID: previous.account.id) }
+        let deadline = Date().addingTimeInterval(2)
+        while await http.count == 0, Date() < deadline { try await Task.sleep(for: .milliseconds(1)) }
+        let count = await http.count
+        XCTAssertEqual(count, 1)
+        let reconnect = Task { try await accounts.save(identity: GoogleDriveIdentity(drivePermissionID: "111"), tokens: tokens(refresh: "replacement", age: 3600)) }
+        for _ in 0..<100 { await Task.yield() }
+        await http.release()
+        do { _ = try await refresh.value; XCTFail("Expired authorization unexpectedly refreshed") }
+        catch { XCTAssertEqual(error as? GoogleDriveTransportFailure, .accessDenied) }
+        let repaired = try await reconnect.value
+        XCTAssertEqual(repaired.account.id, previous.account.id)
+        let active = try await accounts.list()
+        XCTAssertEqual(active, [repaired.account])
+        let remaining = await keychain.snapshot()
+        XCTAssertEqual(Set(remaining.keys), [repaired.account.credentialID])
+    }
+
     func testEveryRemoteLookupResolvesFolderAndSearchesByNameAgain() async throws {
         let directory = try directory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -539,6 +620,10 @@ final class GoogleDriveAccountsTests: XCTestCase {
 }
 
 private actor DriveSuspendedHTTPFixture {
+    private let reply: GoogleDriveHTTPReply
+    init(reply: GoogleDriveHTTPReply = GoogleDriveHTTPReply(statusCode: 200, body: Data(#"{"access_token":"renewed-access","expires_in":3600,"token_type":"Bearer"}"#.utf8))) {
+        self.reply = reply
+    }
     private var released = false
     private(set) var count = 0
     nonisolated var transport: GoogleDriveTransport {
@@ -549,7 +634,7 @@ private actor DriveSuspendedHTTPFixture {
         count += 1
         while !released { try await Task.sleep(for: .milliseconds(1)) }
         try Task.checkCancellation()
-        return GoogleDriveHTTPReply(statusCode: 200, body: Data(#"{"access_token":"renewed-access","expires_in":3600,"token_type":"Bearer"}"#.utf8))
+        return reply
     }
 }
 
@@ -616,4 +701,19 @@ private final class RegistryDirectorySyncFixture: @unchecked Sendable {
             successesRemaining = remaining - 1
         }
     }
+}
+
+private actor DriveCredentialReadGate {
+    private var armed = false
+    private var continuation: CheckedContinuation<Void, Never>?
+    var entered: Bool { continuation != nil }
+    func arm() { armed = true }
+    func capture(_ data: Data) async -> Data {
+        if armed {
+            armed = false
+            await withCheckedContinuation { continuation = $0 }
+        }
+        return data
+    }
+    func release() { continuation?.resume(); continuation = nil }
 }
