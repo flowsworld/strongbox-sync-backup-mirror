@@ -21,7 +21,7 @@ Apple provides `NSFileProviderManager.getIdentifierForUserVisibleFile(at:complet
 This is an implementation recommendation, not a promise of Google's local path format:
 
 1. Use only the already selected local target URL. Do not enumerate other local cloud roots, inspect Drive's private databases or expand filesystem permissions.
-2. Accept an explicit, bounded File Provider path convention under the current user's `Library/CloudStorage`, with an account component matching a connected account and a recognized My Drive component. Preserve the remaining exact folder-name components. Unknown roots, shared drives, custom mirroring and aliases whose original mapping is unavailable use the existing manual link.
+2. Accept an explicit, bounded File Provider path convention under `/Users/<user>/Library/CloudStorage` in the already selected, accessible target URL, with an account component matching a connected account and a recognized My Drive component. Preserve the remaining exact folder-name components. Unknown roots, shared drives, custom mirroring and aliases whose original mapping is unavailable use the existing manual link.
 3. Resolve the connected account's My Drive root through the REST `root` alias. Traverse each remaining component within its previously resolved parent. Require one complete, unambiguous folder result per component. Google defines folders by MIME type and supports `root` wherever a file ID is accepted. [Folder API guide](https://developers.google.com/workspace/drive/api/guides/folder)
 4. Persist the verified remote folder ID with the account and existing local-target identity. Invalidate or re-resolve an automatic association when the local target or account changes. Verification continues to find the filename inside that folder, so replacement file IDs do not require a new selection.
 
@@ -29,7 +29,7 @@ Use `files.list` with an exact query such as `'<parent ID>' in parents and name 
 
 Remote folder names are not unique within a parent. Two same-named folders at any level make the path ambiguous, even if only one currently contains a matching database. Do not choose the first result or use the file's checksum to choose its future sync destination. File metadata exposes parent IDs, size and binary checksums; those checksums establish a content match, not an intended destination. [File metadata reference](https://developers.google.com/workspace/drive/api/reference/rest/v3/files)
 
-Follow every `nextPageToken`, including empty continued pages. Reject `incompleteSearch`, malformed metadata, repeated tokens and bounded pagination exhaustion. Use explicit `spaces=drive` and `corpora=user` for My Drive discovery. A rejected token or concurrent additions can invalidate a traversal; retry from a fresh request or leave the association unresolved. [List response and corpus semantics](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/list)
+Follow every `nextPageToken`, including empty continued pages. Reject `incompleteSearch`, malformed metadata, repeated tokens and bounded pagination exhaustion. The existing request policy uses `spaces=drive` and the default user corpus. A rejected token or concurrent additions can invalidate a traversal; retry from a fresh request or leave the association unresolved. [List response and corpus semantics](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/list)
 
 ## Identical files elsewhere
 

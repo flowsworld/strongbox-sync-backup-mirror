@@ -14,7 +14,7 @@ struct DriveView: View {
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Text(L10n.text("The app reads file metadata only. It does not upload files, read cloud file contents or write to Google Drive."))
                 .fixedSize(horizontal: false, vertical: true)
-            Text(L10n.text("Google grants read access to metadata across all Drive files. Choosing a folder limits this app's queries, not Google's permission."))
+            Text(L10n.text("Google grants read access to metadata across all Drive files. The selected folder determines verification; the app also searches for identical copies elsewhere in this account."))
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if !drive.isAvailable {
                 Label(L10n.text(model.isDemo ? "Google Drive is disabled in the preview." : "Google Drive is not configured for this build."), systemImage: "info.circle")
@@ -70,7 +70,7 @@ struct DriveView: View {
                         DriveDatabaseView(database: database, drive: drive, demo: model.isDemo)
                     }
                     Button(L10n.text(drive.isChecking ? "Checking…" : "Check cloud now")) { drive.requestCheck() }
-                        .disabled(!drive.isAvailable || drive.bindings.isEmpty || drive.isChecking || model.isDemo || model.isChecking)
+                        .disabled(!drive.isAvailable || !drive.canRequestCheck || drive.isChecking || model.isDemo || model.isChecking)
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
             GroupBox(L10n.text("Cloud notifications")) {

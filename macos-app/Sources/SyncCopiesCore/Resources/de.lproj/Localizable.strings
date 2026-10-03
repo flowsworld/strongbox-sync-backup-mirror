@@ -369,3 +369,5 @@
 "Connect the Google account used by this local Drive folder, or choose a folder manually." = "Verbinde das Google-Konto dieses lokalen Drive-Ordners oder wähle einen Ordner manuell.";
 "The local Drive path could not be matched uniquely. Choose a folder manually." = "Der lokale Drive-Pfad konnte nicht eindeutig zugeordnet werden. Wähle den Ordner manuell.";
 "The Drive location could not be checked. Retry or choose a folder manually." = "Der Drive-Speicherort konnte nicht geprüft werden. Versuche es erneut oder wähle den Ordner manuell.";
+
+"Google grants read access to metadata across all Drive files. The selected folder determines verification; the app also searches for identical copies elsewhere in this account." = "Google erlaubt Zugriff auf Metadaten aller Drive-Dateien. Der gewählte Ordner bestimmt die Prüfung; zusätzlich sucht die App nach identischen Kopien in anderen Ordnern dieses Kontos.";

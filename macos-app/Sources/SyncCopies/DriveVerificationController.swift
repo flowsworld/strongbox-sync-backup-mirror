@@ -1,6 +1,7 @@
 import Combine
 import Darwin
 import Foundation
+import OSLog
 import SyncCopiesCore
 
 struct DriveLocalSnapshot: Sendable {
@@ -136,11 +137,15 @@ final class DriveVerificationController: ObservableObject {
     @Published private(set) var additionalCopyCounts: [UUID: Int] = [:]
     @Published private(set) var localDriveDatabaseIDs: Set<UUID> = []
     var automaticCheckingDisabled: Set<UUID> { settings.automaticallyDisabled ?? [] }
+    var canRequestCheck: Bool {
+        !bindings.isEmpty || (!accounts.isEmpty && !localDriveDatabaseIDs.subtracting(automaticCheckingDisabled).isEmpty)
+    }
     var isAvailable: Bool { environment != nil }
     var canChangeSettings: Bool { !stopped && !demo }
     static let permissionURL = URL(string: "https://myaccount.google.com/connections")!
 
     private let settingsURL: URL
+    private let logger = Logger(subsystem: "cloud.diesis.sync-copies", category: "DriveVerification")
     private let environment: DriveVerificationEnvironment?
     private let demo: Bool
     private var settings = Settings()
@@ -477,6 +482,7 @@ final class DriveVerificationController: ObservableObject {
             }
             return
         }
+        var advisories: [(UUID, DriveVerificationBinding, String, UploadLocalFingerprint)] = []
         for input in inputs {
             guard captured == generation, !Task.isCancelled else { return }
             await discoverBinding(for: input, generation: captured)
@@ -532,11 +538,8 @@ final class DriveVerificationController: ObservableObject {
                 guard captured == generation, !Task.isCancelled else { return }
                 await recordResult(id: input.id, name: input.name, context: context, local: snapshot.fingerprint,
                                    outcome: remote.map(UploadCheckOutcome.file) ?? .missing, generation: captured)
-                if results[input.id]?.status == .confirmed, let otherCopies = environment.otherCopies {
-                    // This advisory search cannot change the authoritative folder result.
-                    let count = try? await otherCopies(binding.accountID, binding.folderID, input.filename, snapshot.fingerprint)
-                    guard captured == generation, !Task.isCancelled else { return }
-                    if let count, count > 0 { additionalCopyCounts[input.id] = count }
+                if results[input.id]?.status == .confirmed {
+                    advisories.append((input.id, binding, input.filename, snapshot.fingerprint))
                 }
             } catch {
                 guard captured == generation, !Task.isCancelled else { return }
@@ -549,6 +552,20 @@ final class DriveVerificationController: ObservableObject {
                 }
                 await recordResult(id: input.id, name: input.name, context: context, local: snapshot?.fingerprint,
                                    outcome: .failure(Self.problem(error)), generation: captured)
+            }
+        }
+        // All databases receive their primary verification before optional duplicate searches.
+        guard let otherCopies = environment.otherCopies else { return }
+        for (id, binding, filename, fingerprint) in advisories {
+            guard captured == generation, !Task.isCancelled else { return }
+            do {
+                let count = try await otherCopies(binding.accountID, binding.folderID, filename, fingerprint)
+                guard captured == generation, !Task.isCancelled else { return }
+                if count > 0 { additionalCopyCounts[id] = count }
+            } catch {
+                guard captured == generation, !Task.isCancelled else { return }
+                // Log fixed text only. Raw provider errors may contain private metadata.
+                logger.debug("Optional additional-copy lookup failed. Primary verification is unchanged.")
             }
         }
     }

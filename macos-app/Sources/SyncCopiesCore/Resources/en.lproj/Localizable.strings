@@ -369,3 +369,5 @@
 "Connect the Google account used by this local Drive folder, or choose a folder manually." = "Connect the Google account used by this local Drive folder, or choose a folder manually.";
 "The local Drive path could not be matched uniquely. Choose a folder manually." = "The local Drive path could not be matched uniquely. Choose a folder manually.";
 "The Drive location could not be checked. Retry or choose a folder manually." = "The Drive location could not be checked. Retry or choose a folder manually.";
+
+"Google grants read access to metadata across all Drive files. The selected folder determines verification; the app also searches for identical copies elsewhere in this account." = "Google grants read access to metadata across all Drive files. The selected folder determines verification; the app also searches for identical copies elsewhere in this account.";

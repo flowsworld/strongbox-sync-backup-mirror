@@ -124,6 +124,8 @@ private final class DriveControllerFixture {
     var discoveryFailure: GoogleDriveMetadataError?
     var otherCopyCount = 0
     var otherCopyFailure = false
+    var extraLocalInput: DriveLocalInput?
+    var otherCopyGate: DriveSnapshotGate?
     var delivered: [DriveVerificationEvent] = []
     var history: [DriveVerificationEvent] = []
     var cancelled: [UUID] = []
@@ -158,7 +160,7 @@ private final class DriveControllerFixture {
                         if let validationProblem { throw validationProblem }
                         if let fileProblem { throw fileProblem }
                     })
-                }, drivePath: drivePath)]
+                }, drivePath: drivePath)] + (extraLocalInput.map { [$0] } ?? [])
             }, deliver: { [self] event in
                 if deliveryFails { throw UploadVerificationFailure.providerUnavailable }
                 delivered.append(event)
@@ -167,6 +169,7 @@ private final class DriveControllerFixture {
                 if let problem = await discoveryFailure { throw problem }
                 return try await server.folder("automatic-folder")
             }, otherCopies: { [self] _, _, _, _ in
+                if let gate = await otherCopyGate { await gate.wait() }
                 if await otherCopyFailure { throw UploadVerificationFailure.providerUnavailable }
                 return await otherCopyCount
             })
@@ -266,6 +269,7 @@ struct DriveVerificationControllerTests {
         try await fixture.settle(controller)
         #expect(controller.bindings.isEmpty)
         #expect(controller.automaticSetupProblems[fixture.id] == .folder)
+        #expect(controller.canRequestCheck)
         #expect(fixture.delivered.isEmpty)
     }
 
@@ -320,6 +324,34 @@ struct DriveVerificationControllerTests {
         controller.localCopiesChanged()
         #expect(controller.additionalCopyCounts.isEmpty)
         #expect(controller.results.isEmpty)
+    }
+
+    @Test func slowDuplicateLookupDoesNotDelayOtherDatabaseVerification() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        let secondID = UUID(), fingerprint = fixture.fingerprint
+        fixture.extraLocalInput = DriveLocalInput(id: secondID, name: "Second fixture", filename: "second.kdbx",
+            destinationID: "second-target", makeSnapshot: {
+                DriveLocalSnapshot(fingerprint: fingerprint, validate: {})
+            })
+        await fixture.server.set(remote: try fixture.matching())
+        let controller = fixture.controller()
+        try await fixture.bind(controller)
+        try await controller.selectFolder(databaseID: secondID, accountID: (await fixture.server.accounts())[0].id, input: "second-folder")
+        try await fixture.settle(controller)
+        let gate = DriveSnapshotGate()
+        fixture.otherCopyGate = gate
+        controller.requestCheck()
+        for _ in 0..<10_000 {
+            if await gate.entered { break }
+            await Task.yield()
+        }
+        #expect(await gate.entered)
+        #expect(controller.results[fixture.id]?.status == .confirmed)
+        #expect(controller.results[secondID]?.status == .confirmed)
+        fixture.otherCopyGate = nil
+        await gate.release()
+        try await fixture.settle(controller)
     }
 
     @Test func automaticResolutionCannotPublishAfterDisablingOrDuringQuit() async throws {

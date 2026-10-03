@@ -12,7 +12,9 @@ werden weder gelesen noch migriert.
    External/Testing wählen und die vorgesehenen Testkonten hinzufügen.
 3. Genau `https://www.googleapis.com/auth/drive.metadata.readonly` eintragen.
    Das Recht gilt für Metadaten aller Drive-Dateien. Die spätere Ordnerwahl
-   begrenzt die Abfragen der App, nicht die OAuth-Berechtigung.
+   bestimmt den eigentlichen Vergleich, nicht die OAuth-Berechtigung. Für den
+   Hinweis auf identische Kopien sucht die App außerdem gleichnamige Dateien
+   in anderen Ordnern dieses Kontos.
 4. Einen Desktop-Client erstellen. Die App verwendet PKCE und einen kurzlebigen
    Callback auf `127.0.0.1` mit zufälligem Port. Keinen Web-Client verwenden.
 5. Projekt-ID, Client-ID und optionales Desktop-Client-Secret lokal speichern.
