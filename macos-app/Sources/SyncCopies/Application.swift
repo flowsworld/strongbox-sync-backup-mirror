@@ -120,8 +120,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         menu.addItem(heading)
         if let problem = model.problem { menu.addItem(NSMenuItem(title: problem, action: nil, keyEquivalent: "")) }
         for database in model.databases where model.preference(for: database).enabled {
-            let state = model.states[database.id]
-            let status = state?.error != nil ? L10n.text("Check failed") : (state?.checked != nil ? L10n.text("Copied locally") : L10n.text("Not checked yet"))
+            let status = model.targetStatus(for: database)
             let row = NSMenuItem(title: "\(database.displayName): \(status)", action: #selector(openDatabase(_:)), keyEquivalent: "")
             row.representedObject = database.id.uuidString
             row.target = self

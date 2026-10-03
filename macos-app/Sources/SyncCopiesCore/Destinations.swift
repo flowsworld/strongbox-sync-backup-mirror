@@ -2,11 +2,13 @@ import Foundation
 import Darwin
 
 public struct CopyDestination: Sendable {
+    public let id: UUID
     public let databaseID: UUID
     public let directory: URL
     public let filename: String
 
-    public init(databaseID: UUID, directory: URL, filename: String) {
+    public init(id: UUID? = nil, databaseID: UUID, directory: URL, filename: String) {
+        self.id = id ?? databaseID
         self.databaseID = databaseID
         self.directory = directory
         self.filename = filename
@@ -24,10 +26,26 @@ public enum DestinationError: Error, LocalizedError, LocalizedMessageError, Equa
 }
 
 public enum DestinationPlanner {
+    /// Compare physical folder identity without accepting symbolic links.
+    public static func sameDirectory(_ first: URL, _ second: URL) throws -> Bool {
+        let firstDirectory = try openDirectory(first)
+        let secondDirectory = try openDirectory(second)
+        return try firstDirectory.stamp().sameIdentity(as: secondDirectory.stamp())
+    }
+
+    public static func conflictingDatabaseIDs(
+        _ destinations: [CopyDestination], sourceRoot: URL,
+        onInvalidDestination: ((CopyDestination, any Error) -> Void)? = nil
+    ) throws -> Set<UUID> {
+        let conflicts = try conflictingDestinationIDs(destinations, sourceRoot: sourceRoot,
+                                                       onInvalidDestination: onInvalidDestination)
+        return Set(destinations.filter { conflicts.contains($0.id) }.map(\.databaseID))
+    }
+
     /// Validate every selected destination before copying any database.
     /// Invalid destinations may be reported individually so unrelated copies continue.
     /// Directory identity catches different path spellings that refer to the same folder.
-    public static func conflictingDatabaseIDs(
+    public static func conflictingDestinationIDs(
         _ destinations: [CopyDestination], sourceRoot: URL,
         onInvalidDestination: ((CopyDestination, any Error) -> Void)? = nil
     ) throws -> Set<UUID> {
@@ -46,7 +64,7 @@ public enum DestinationPlanner {
                       !path.hasPrefix(sourcePrefix) else { throw DestinationError.insideSource }
                 let identity = DestinationIdentity(device: stamp.device, inode: stamp.inode,
                                                    filename: normalizedDestinationName(destination.filename))
-                groups[identity, default: []].append(destination.databaseID)
+                groups[identity, default: []].append(destination.id)
             } catch {
                 guard let onInvalidDestination else { throw error }
                 onInvalidDestination(destination, error)

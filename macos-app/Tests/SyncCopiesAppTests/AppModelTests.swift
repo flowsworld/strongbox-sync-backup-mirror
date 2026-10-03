@@ -44,9 +44,9 @@ final class ModelFixture: @unchecked Sendable {
         try backup(second, bytes: "second encrypted fixture")
         var preferences = Preferences()
         preferences.source = Data("source".utf8)
-        preferences.defaultTarget = Data("common".utf8)
+        preferences.defaultTargets = [CopyTarget(bookmark: Data("common".utf8))]
         preferences.databases[first.id.uuidString] = DatabasePreferences(enabled: true)
-        preferences.databases[second.id.uuidString] = DatabasePreferences(enabled: true, target: Data("override".utf8))
+        preferences.databases[second.id.uuidString] = DatabasePreferences(enabled: true, targets: [CopyTarget(bookmark: Data("override".utf8))])
         try JSONEncoder().encode(preferences).write(to: preferencesURL)
     }
     deinit { try? FileManager.default.removeItem(at: root) }
@@ -124,6 +124,131 @@ private final class ModelNotificationGate {
 
 @MainActor
 struct AppModelTests {
+    @Test func replacementOfDisabledLegacyTargetDoesNotInheritItsDriveSelection() async throws {
+        let fixture = try ModelFixture()
+        let old = """
+        {"source":"c291cmNl","defaultTarget":"Y29tbW9u","databases":{
+        "\(fixture.first.id.uuidString)":{"enabled":false,"target":"b3ZlcnJpZGU="}},
+        "notifications":{"failures":true,"copies":false,"recoveries":false},"history":[]}
+        """
+        try Data(old.utf8).write(to: fixture.preferencesURL)
+        let model = AppModel(environment: fixture.environment())
+        try await settled(model)
+        let original = try #require(model.targets(for: fixture.first).first)
+        try model.addTarget(bookmark: Data("common".utf8), for: fixture.first, replacing: original.id)
+        try await settled(model)
+        model.setEnabled(true, for: fixture.first)
+        try await settled(model)
+        let replacement = try #require(model.driveLocalInputs().first { $0.databaseID == fixture.first.id })
+        #expect(replacement.legacyDatabaseID == nil)
+        await model.shutdown()
+    }
+
+    @Test func filenameConflictBlocksOnlyCollidingTargetsOfEachFile() async throws {
+        let fixture = try ModelFixture()
+        let second = Database(id: fixture.second.id, filename: fixture.first.filename, displayName: "Second")
+        try fixture.catalog([fixture.first, second])
+        var settings = try JSONDecoder().decode(Preferences.self, from: Data(contentsOf: fixture.preferencesURL))
+        let shared = CopyTarget(bookmark: Data("common".utf8))
+        let separate = CopyTarget(bookmark: Data("override".utf8))
+        settings.databases[fixture.first.id.uuidString]?.targets = [shared, separate]
+        settings.databases[second.id.uuidString]?.targets = nil
+        try JSONEncoder().encode(settings).write(to: fixture.preferencesURL)
+        let model = AppModel(environment: fixture.environment())
+        try await settled(model)
+        #expect(!FileManager.default.fileExists(atPath: fixture.common.appendingPathComponent(fixture.first.filename).path))
+        #expect(try Data(contentsOf: fixture.override.appendingPathComponent(fixture.first.filename)) == Data("first encrypted fixture".utf8))
+        #expect(model.states[fixture.first.id]?.targetStates[shared.id]?.error != nil)
+        #expect(model.states[fixture.first.id]?.targetStates[separate.id]?.error == nil)
+        #expect(model.states[second.id]?.error != nil)
+        await model.shutdown()
+    }
+
+    @Test func addingCommonTargetCopiesImmediatelyAndRejectsPhysicalDuplicate() async throws {
+        let fixture = try ModelFixture()
+        let base = fixture.environment()
+        let resolveFolder = base.resolveFolder
+        let environment = AppEnvironment(preferencesURL: fixture.preferencesURL, resolveFolder: { data in
+            if data == Data("same-folder".utf8) { return FolderAccess(url: URL(fileURLWithPath: fixture.root.path + "//common/", isDirectory: true)) }
+            return try resolveFolder(data)
+        }, scheduler: base.scheduler, notifications: base.notifications, loginStatus: base.loginStatus, setLogin: base.setLogin)
+        let model = AppModel(environment: environment)
+        try await settled(model)
+        #expect(throws: ConfigurationError.self) { try model.addTarget(bookmark: Data("same-folder".utf8)) }
+        #expect(model.preferences.defaultTargets.count == 1)
+        try model.addTarget(bookmark: Data("override".utf8))
+        try await settled(model)
+        #expect(model.preferences.defaultTargets.count == 2)
+        #expect(try Data(contentsOf: fixture.override.appendingPathComponent(fixture.first.filename)) == Data("first encrypted fixture".utf8))
+        #expect(model.targets(for: fixture.second).count == 1)
+        await model.shutdown()
+    }
+
+    @Test func removingLastOwnTargetPreservesItsCopyAndRequiresExplicitCommonSelection() async throws {
+        let fixture = try ModelFixture()
+        let model = AppModel(environment: fixture.environment())
+        try await settled(model)
+        let target = try #require(model.targets(for: fixture.second).first)
+        model.removeTarget(target.id, for: fixture.second)
+        try await settled(model)
+        #expect(model.preference(for: fixture.second).targets?.isEmpty == true)
+        #expect(model.states[fixture.second.id]?.error?.key == "No destinations configured")
+        #expect(!FileManager.default.fileExists(atPath: fixture.common.appendingPathComponent(fixture.second.filename).path))
+        #expect(try Data(contentsOf: fixture.override.appendingPathComponent(fixture.second.filename)) == Data("second encrypted fixture".utf8))
+        model.useCommonTarget(for: fixture.second)
+        try await settled(model)
+        #expect(model.preference(for: fixture.second).targets == nil)
+        #expect(try Data(contentsOf: fixture.common.appendingPathComponent(fixture.second.filename)) == Data("second encrypted fixture".utf8))
+        await model.shutdown()
+    }
+
+    @Test func returningTargetReceivesNewestBackupWhileItsNeighborRemainsCurrent() async throws {
+        let fixture = try ModelFixture()
+        var settings = try JSONDecoder().decode(Preferences.self, from: Data(contentsOf: fixture.preferencesURL))
+        settings.databases[fixture.first.id.uuidString]?.targets = [
+            CopyTarget(bookmark: Data("common".utf8)), CopyTarget(bookmark: Data("override".utf8))
+        ]
+        try JSONEncoder().encode(settings).write(to: fixture.preferencesURL)
+        let model = AppModel(environment: fixture.environment())
+        try await settled(model)
+        let offline = fixture.root.appendingPathComponent("offline-common")
+        try FileManager.default.moveItem(at: fixture.common, to: offline)
+        try fixture.backup(fixture.first, bytes: "newest encrypted fixture", name: "newest.bak")
+        model.refresh()
+        try await settled(model)
+        #expect(try Data(contentsOf: fixture.override.appendingPathComponent(fixture.first.filename)) == Data("newest encrypted fixture".utf8))
+        try FileManager.default.moveItem(at: offline, to: fixture.common)
+        model.refresh()
+        try await settled(model)
+        #expect(try Data(contentsOf: fixture.common.appendingPathComponent(fixture.first.filename)) == Data("newest encrypted fixture".utf8))
+        #expect(model.states[fixture.first.id]?.error == nil)
+        await model.shutdown()
+    }
+
+    @Test func failingTargetDoesNotPreventOtherTargetsOfTheSameFile() async throws {
+        let fixture = try ModelFixture()
+        var settings = try JSONDecoder().decode(Preferences.self, from: Data(contentsOf: fixture.preferencesURL))
+        let common = CopyTarget(bookmark: Data("common".utf8))
+        let other = CopyTarget(bookmark: Data("override".utf8))
+        let offline = CopyTarget(bookmark: Data("offline".utf8))
+        settings.databases[fixture.first.id.uuidString]?.targets = [offline, common, other]
+        try JSONEncoder().encode(settings).write(to: fixture.preferencesURL)
+        let model = AppModel(environment: fixture.environment())
+        try await settled(model)
+        #expect(try Data(contentsOf: fixture.common.appendingPathComponent(fixture.first.filename)) == Data("first encrypted fixture".utf8))
+        #expect(try Data(contentsOf: fixture.override.appendingPathComponent(fixture.first.filename)) == Data("first encrypted fixture".utf8))
+        #expect(model.states[fixture.first.id]?.targetStates[offline.id]?.error != nil)
+        #expect(model.states[fixture.first.id]?.targetStates[common.id]?.error == nil)
+        #expect(model.states[fixture.first.id]?.error != nil)
+        let inputs = model.driveLocalInputs().filter { $0.databaseID == fixture.first.id }
+        #expect(inputs.count == 3)
+        let healthy = try #require(inputs.first { $0.id == common.copyID(for: fixture.first.id) })
+        _ = try await healthy.makeSnapshot()
+        let failed = try #require(inputs.first { $0.id == offline.copyID(for: fixture.first.id) })
+        await #expect(throws: UploadVerificationFailure.localFileUnavailable) { try await failed.makeSnapshot() }
+        await model.shutdown()
+    }
+
     @Test func abortedInstallerCannotResumeProviderDuringTerminationWait() async throws {
         let fixture = try ModelFixture()
         let gate = ResolutionGate()
@@ -245,7 +370,7 @@ struct AppModelTests {
         try await settled(model)
         #expect(model.preference(for: fixture.first).lastCopied == nil)
         #expect(model.states[fixture.first.id]?.error == nil)
-        let input = try #require(model.driveLocalInputs().first { $0.id == fixture.first.id })
+        let input = try #require(model.driveLocalInputs().first { $0.databaseID == fixture.first.id })
         let snapshot = try await input.makeSnapshot()
         #expect(snapshot.fingerprint.size == Int64(Data("first encrypted fixture".utf8).count))
         try await snapshot.validate()
@@ -359,7 +484,7 @@ struct AppModelTests {
         model.useCommonTarget(for: fixture.second)
         #expect(invalidations == 1)
         #expect(model.states.isEmpty)
-        let input = try #require(model.driveLocalInputs().first { $0.id == fixture.second.id })
+        let input = try #require(model.driveLocalInputs().first { $0.databaseID == fixture.second.id })
         await #expect(throws: UploadVerificationFailure.localFileUnavailable) { try await input.makeSnapshot() }
         #expect(model.problem != nil)
         await model.shutdown()
@@ -373,7 +498,7 @@ struct AppModelTests {
         #expect(model.isStopping)
         let saved = try JSONDecoder().decode(Preferences.self, from: Data(contentsOf: fixture.preferencesURL))
         #expect(saved.source == Data("source".utf8))
-        #expect(saved.defaultTarget == Data("common".utf8))
+        #expect(saved.defaultTargets.first?.bookmark == Data("common".utf8))
         #expect(saved.databases[fixture.first.id.uuidString]?.lastCopied != nil)
         #expect(!saved.history.isEmpty)
         #expect(try Data(contentsOf: fixture.common.appendingPathComponent(fixture.first.filename)) == Data("first encrypted fixture".utf8))
@@ -668,7 +793,7 @@ struct AppModelTests {
         let restarted = AppModel(environment: fixture.environment())
         try await settled(restarted)
         #expect(restarted.activeCount == 1)
-        #expect(restarted.preference(for: fixture.second).target == Data("override".utf8))
+        #expect(restarted.preference(for: fixture.second).targets?.first?.bookmark == Data("override".utf8))
         #expect(restarted.states[fixture.first.id]?.copied == false)
         await restarted.shutdown()
     }
@@ -807,7 +932,7 @@ struct AppModelTests {
     @Test func staleOverrideAtRestartDoesNotPreventOtherDatabaseCopy() async throws {
         let fixture = try ModelFixture()
         var settings = try JSONDecoder().decode(Preferences.self, from: Data(contentsOf: fixture.preferencesURL))
-        settings.databases[fixture.second.id.uuidString]?.target = Data("revoked-target".utf8)
+        settings.databases[fixture.second.id.uuidString]?.targets = [CopyTarget(bookmark: Data("revoked-target".utf8))]
         try JSONEncoder().encode(settings).write(to: fixture.preferencesURL)
         let existing = fixture.override.appendingPathComponent("second.kdbx")
         try Data("previous target copy".utf8).write(to: existing)
@@ -817,7 +942,7 @@ struct AppModelTests {
         #expect(model.states[fixture.second.id]?.error != nil)
         #expect(model.states[fixture.first.id]?.error == nil)
         #expect(try Data(contentsOf: existing) == Data("previous target copy".utf8))
-        #expect(model.preference(for: fixture.second).target == Data("revoked-target".utf8))
+        #expect(model.preference(for: fixture.second).targets?.first?.bookmark == Data("revoked-target".utf8))
         await model.shutdown()
     }
 
@@ -826,7 +951,7 @@ struct AppModelTests {
         let colliding = Database(id: fixture.second.id, filename: fixture.first.filename, displayName: "Collision")
         try fixture.catalog([fixture.first, colliding])
         var settings = try JSONDecoder().decode(Preferences.self, from: Data(contentsOf: fixture.preferencesURL))
-        settings.databases[fixture.second.id.uuidString]?.target = nil
+        settings.databases[fixture.second.id.uuidString]?.targets = nil
         try JSONEncoder().encode(settings).write(to: fixture.preferencesURL)
         let target = fixture.common.appendingPathComponent("first.kdbx")
         try Data("previous non-conflicting copy".utf8).write(to: target)

@@ -40,11 +40,19 @@ App. Zuerst wird der Lesezugriff auf den bekannten Strongbox-Ordner über den
 macOS-Ordnerdialog erteilt. Die Freigabe umfasst Metadaten und verschlüsselte
 Backups. Die App entschlüsselt keine Datenbank und schreibt nicht in Strongbox.
 
-Anschließend einen gemeinsamen Zielordner wählen und die gewünschten
+Anschließend gemeinsame Zielordner wählen und die gewünschten
 Strongbox-Sync-Datenbanken aktivieren. Jede Aktivierung startet unmittelbar eine
-Prüfung und kann eine bestehende gleichnamige Zieldatei ersetzen. Datenbanken
-können eigene Zielordner erhalten. Mehrere aktive Datenbanken mit demselben
-Zieldateinamen im selben Ordner werden blockiert.
+Prüfung und kann eine bestehende gleichnamige Zieldatei ersetzen. Jede Datei verwendet entweder die gemeinsamen Ziele oder eine eigene Zielliste, die
+sie vollständig ersetzt. Ziele werden unabhängig aktualisiert. Fehler und
+Dateinamenskonflikte blockieren nur die betroffenen Kopien. Die Übersicht zeigt
+Teilerfolge und den Zustand jedes Ziels. Neue Ziele erhalten sofort den neuesten
+Stand. Ein wieder verfügbares Ziel holt diesen bei der nächsten Prüfung nach.
+
+Nach Entfernen des letzten eigenen Ziels bleibt die Datei ohne Ziel. Die
+Rückkehr zu gemeinsamen Zielen erfolgt ausdrücklich. Entfernen oder Wechseln
+eines Zielordners lässt vorhandene Kopien im bisherigen Ordner liegen. Derselbe
+physische Ordner lässt sich innerhalb einer Zielliste nur einmal hinzufügen.
+Bestehende Einzelziele und ihre Ordnerfreigaben werden beim Laden übernommen.
 
 Für einen ersten realen Test ausschließlich einen neuen, separaten Zielordner
 verwenden. Der vorhandene Shell-Helfer und seine Konfiguration werden von der
@@ -197,8 +205,11 @@ Google garantiert das lokale Konten-/Ordnernamensformat nicht als öffentliche
 Schnittstelle. Unbekannte, frei gespiegelte und geteilte Ablagen lassen sich
 weiter über den bisherigen Ordnerlink oder die ID einrichten. Manuelle
 Zuordnungen bleiben erhalten. Ausgeschaltete Cloud-Prüfungen bleiben auch nach
-einem Neustart aus. Bei automatisch zugeordneten Datenbanken löst ein neuer
-lokaler Zielordner die Zuordnung erneut aus. Die Grenzen und Quellen stehen in
+einem Neustart aus. Jedes Ziel hat eine eigene Cloud-Zuordnung und einen eigenen Prüfzustand. Ein
+Fehler an einem anderen lokalen Ziel verhindert die Drive-Prüfung nicht.
+Bestehende Cloud-Zuordnungen und ausgeschaltete Prüfungen werden nur auf das
+ursprüngliche Ziel übernommen. Bei einem neuen lokalen Zielordner wird die
+automatische Zuordnung erneut geprüft. Die Grenzen und Quellen stehen in
 [der Pfadrecherche](../docs/research/google-drive-path-discovery.md).
 
 Die optionale Google-Drive-Prüfung ist implementiert. Sie braucht einen eigenen

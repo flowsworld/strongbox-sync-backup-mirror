@@ -12,8 +12,8 @@ struct SetupChecklist: View {
                     Button(L10n.text("Allow access…")) { model.chooseSource() }
                         .disabled(!model.canChooseSource)
                 }
-                step(2, complete: model.preferences.defaultTarget != nil,
-                     title: "Choose where copies go", description: "A shared destination for your databases.") {
+                step(2, complete: !model.preferences.defaultTargets.isEmpty,
+                     title: "Choose where copies go", description: "Shared destinations for your databases.") {
                     Button(L10n.text("Choose folder…")) { model.chooseTarget() }
                         .disabled(model.isDemo || model.isChecking || model.isStopping)
                 }
