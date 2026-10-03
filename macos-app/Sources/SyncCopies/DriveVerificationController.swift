@@ -417,6 +417,7 @@ final class DriveVerificationController: ObservableObject {
             if failure == .accountUnavailable { failure = nil }
         } catch {
             guard captured == generation, !Task.isCancelled else { return }
+            if error as? GoogleDriveAccountFailure == .busy { return }
             for id in settings.bindings.keys {
                 await recordResult(id: id, name: "Database", context: nil, local: nil,
                                    outcome: .failure(Self.problem(error)), generation: captured)
@@ -482,6 +483,13 @@ final class DriveVerificationController: ObservableObject {
                                    outcome: remote.map(UploadCheckOutcome.file) ?? .missing, generation: captured)
             } catch {
                 guard captured == generation, !Task.isCancelled else { return }
+                if error as? GoogleDriveAccountFailure == .busy {
+                    // Credential ownership is temporary, not an authorization failure.
+                    // Leave confirmation unverified until the next scheduled check.
+                    validatedCopies.removeAll()
+                    results = [:]
+                    return
+                }
                 await recordResult(id: input.id, name: input.name, context: context, local: snapshot?.fingerprint,
                                    outcome: .failure(Self.problem(error)), generation: captured)
             }
