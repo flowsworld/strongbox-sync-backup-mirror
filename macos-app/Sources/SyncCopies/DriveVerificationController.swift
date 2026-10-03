@@ -9,13 +9,31 @@ struct DriveLocalSnapshot: Sendable {
     let validate: @Sendable () async throws -> Void
 }
 
-struct DriveLocalInput: Sendable {
+struct DriveLocalInput: Identifiable, Sendable {
     let id: UUID
     let name: String
     let filename: String
     let destinationID: String
     let makeSnapshot: @Sendable () async throws -> DriveLocalSnapshot
-    var drivePath: GoogleDriveLocalPath? = nil
+    let drivePath: GoogleDriveLocalPath?
+    let databaseID: UUID
+    let legacyDatabaseID: UUID?
+    let targetName: String?
+
+    init(id: UUID, name: String, filename: String, destinationID: String,
+         makeSnapshot: @escaping @Sendable () async throws -> DriveLocalSnapshot,
+         drivePath: GoogleDriveLocalPath? = nil, databaseID: UUID? = nil,
+         legacyDatabaseID: UUID? = nil, targetName: String? = nil) {
+        self.id = id
+        self.name = name
+        self.filename = filename
+        self.destinationID = destinationID
+        self.makeSnapshot = makeSnapshot
+        self.drivePath = drivePath
+        self.databaseID = databaseID ?? id
+        self.legacyDatabaseID = legacyDatabaseID
+        self.targetName = targetName
+    }
 }
 
 struct DriveVerificationBinding: Codable, Equatable, Sendable {
@@ -46,9 +64,40 @@ struct DriveVerificationEvent: Codable, Equatable, Identifiable, Sendable {
     let id: UUID
     let databaseID: UUID
     let databaseName: String
+    let copyID: UUID
+    let targetName: String?
     let kind: Kind
     let problem: UploadVerificationFailure?
     let confirmed: Bool
+
+    init(id: UUID, databaseID: UUID, databaseName: String, kind: Kind,
+         problem: UploadVerificationFailure?, confirmed: Bool,
+         copyID: UUID? = nil, targetName: String? = nil) {
+        self.id = id
+        self.databaseID = databaseID
+        self.databaseName = databaseName
+        self.copyID = copyID ?? databaseID
+        self.targetName = targetName
+        self.kind = kind
+        self.problem = problem
+        self.confirmed = confirmed
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, databaseID, databaseName, copyID, targetName, kind, problem, confirmed
+    }
+
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        databaseID = try values.decode(UUID.self, forKey: .databaseID)
+        databaseName = try values.decode(String.self, forKey: .databaseName)
+        copyID = try values.decodeIfPresent(UUID.self, forKey: .copyID) ?? databaseID
+        targetName = try values.decodeIfPresent(String.self, forKey: .targetName)
+        kind = try values.decode(Kind.self, forKey: .kind)
+        problem = try values.decodeIfPresent(UploadVerificationFailure.self, forKey: .problem)
+        confirmed = try values.decode(Bool.self, forKey: .confirmed)
+    }
 }
 
 enum DriveNotificationDelivery: Sendable { case delivered, permissionDenied }
@@ -126,6 +175,7 @@ struct DriveVerificationEnvironment {
 @MainActor
 final class DriveVerificationController: ObservableObject {
     @Published private(set) var accounts: [GoogleDriveAccount] = []
+    // Settings and observations use copy-operation IDs so each target is independent.
     @Published private(set) var bindings: [UUID: DriveVerificationBinding] = [:]
     @Published private(set) var results: [UUID: UploadVerificationState] = [:]
     @Published private(set) var preferences = DriveNotificationPreferences()
@@ -158,7 +208,8 @@ final class DriveVerificationController: ObservableObject {
     @Published private var stopped = false
     private var mutations: [UUID: Task<Void, any Error>] = [:]
     private var disconnectingAccounts: Set<String> = []
-    private var activeDatabaseIDs: Set<UUID> = []
+    private var activeCopyIDs: Set<UUID> = []
+    private var activeInputs: [UUID: DriveLocalInput] = [:]
     private struct CurrentCopy {
         let context: UploadVerificationContext
         let sha256: String
@@ -453,8 +504,8 @@ final class DriveVerificationController: ObservableObject {
         catch {
             guard captured == generation, !Task.isCancelled else { return }
             if error as? GoogleDriveAccountFailure == .busy { return }
-            for id in activeDatabaseIDs where settings.bindings[id] != nil {
-                await recordResult(id: id, name: "Database", context: nil, local: nil,
+            for id in activeCopyIDs where settings.bindings[id] != nil {
+                await recordResult(id: id, name: activeInputs[id]?.name ?? "Database", context: nil, local: nil,
                                    outcome: .failure(Self.problem(error)), generation: captured)
             }
             return
@@ -462,9 +513,12 @@ final class DriveVerificationController: ObservableObject {
         // Resolve current local selections before any suspended account lookup.
         // Retained bindings for disabled or removed databases are inactive.
         let active = Set(inputs.map(\.id))
-        activeDatabaseIDs = active
+        activeCopyIDs = active
+        activeInputs = Dictionary(uniqueKeysWithValues: inputs.map { ($0.id, $0) })
+        do { try migrateLegacySelections(inputs) }
+        catch { failure = .settingsUnavailable; return }
         localDriveDatabaseIDs = Set(inputs.filter { $0.drivePath != nil }.map(\.id))
-        cancelScheduled { !active.contains($0.databaseID) }
+        cancelScheduled { !active.contains($0.copyID) }
         publish()
         do {
             let current = try await environment.listAccounts()
@@ -525,7 +579,7 @@ final class DriveVerificationController: ObservableObject {
                     results[input.id] = pending
                     try commit(next)
                     old.forEach { environment.cancelNotification($0.id) }
-                    cancelScheduled { $0.databaseID == input.id }
+                    cancelScheduled { $0.copyID == input.id }
                 }
                 publish()
                 let remote = try await environment.remoteFile(binding.accountID, binding.folderID, input.filename)
@@ -554,7 +608,7 @@ final class DriveVerificationController: ObservableObject {
                                    outcome: .failure(Self.problem(error)), generation: captured)
             }
         }
-        // All databases receive their primary verification before optional duplicate searches.
+        // All targets receive their primary verification before optional duplicate searches.
         guard let otherCopies = environment.otherCopies else { return }
         for (id, binding, filename, fingerprint) in advisories {
             guard captured == generation, !Task.isCancelled else { return }
@@ -570,8 +624,36 @@ final class DriveVerificationController: ObservableObject {
         }
     }
 
+    /// An existing database binding belongs to its original effective target only.
+    /// Removing the old key makes subsequent target additions independent.
+    private func migrateLegacySelections(_ inputs: [DriveLocalInput]) throws {
+        var next = settings
+        var changed = false
+        for input in inputs {
+            guard let legacyID = input.legacyDatabaseID, legacyID != input.id else { continue }
+            if let binding = next.bindings.removeValue(forKey: legacyID) {
+                if next.bindings[input.id] == nil { next.bindings[input.id] = binding }
+                changed = true
+            }
+            if var record = next.records.removeValue(forKey: legacyID) {
+                record.pending = record.pending.map { event in
+                    DriveVerificationEvent(id: event.id, databaseID: input.databaseID, databaseName: input.name,
+                        kind: event.kind, problem: event.problem, confirmed: event.confirmed,
+                        copyID: input.id, targetName: input.targetName)
+                }
+                if next.records[input.id] == nil { next.records[input.id] = record }
+                changed = true
+            }
+            if next.automaticallyDisabled?.remove(legacyID) != nil {
+                next.automaticallyDisabled?.insert(input.id)
+                changed = true
+            }
+        }
+        if changed { try commit(next) }
+    }
+
     /// Known local Drive paths opt in through a connected matching account.
-    /// Manual bindings and explicit per-database opt-outs always take precedence.
+    /// Manual bindings and explicit per-target opt-outs always take precedence.
     private func discoverBinding(for input: DriveLocalInput, generation captured: UInt64) async {
         guard let environment, let discoverFolder = environment.discoverFolder else { return }
         if let binding = settings.bindings[input.id], let destination = binding.automaticDestinationID,
@@ -583,7 +665,7 @@ final class DriveVerificationController: ObservableObject {
             do { try commit(next) }
             catch { failure = .settingsUnavailable; return }
             pending.forEach { environment.cancelNotification($0.id) }
-            cancelScheduled { $0.databaseID == input.id }
+            cancelScheduled { $0.copyID == input.id }
         }
         guard settings.bindings[input.id] == nil,
               !(settings.automaticallyDisabled?.contains(input.id) ?? false),
@@ -679,19 +761,23 @@ final class DriveVerificationController: ObservableObject {
             default: if kind == nil || kind == .confirmed { kind = .recovery }
             }
         }
-        let event = kind.map { DriveVerificationEvent(id: UUID(), databaseID: id, databaseName: name,
-                                                     kind: $0, problem: problem, confirmed: confirmed) }
+        let input = activeInputs[id]
+        let databaseID = input?.databaseID ?? id
+        let event = kind.map { DriveVerificationEvent(id: UUID(), databaseID: databaseID, databaseName: name,
+                                                     kind: $0, problem: problem, confirmed: confirmed,
+                                                     copyID: id, targetName: input?.targetName) }
         if let event {
             if settings.preferences.permits(event.kind) { record.pending.append(event) }
             else if event.kind == .recovery, confirmed, newConfirmation, settings.preferences.confirmed {
-                record.pending.append(DriveVerificationEvent(id: event.id, databaseID: id, databaseName: name,
-                                                            kind: .confirmed, problem: nil, confirmed: true))
+                record.pending.append(DriveVerificationEvent(id: event.id, databaseID: databaseID, databaseName: name,
+                                                            kind: .confirmed, problem: nil, confirmed: true,
+                                                            copyID: id, targetName: input?.targetName))
             }
         }
         var next = settings
         next.records[id] = record
         // Even a persistence failure must not leave a historical confirmation displayed as current.
-        if activeDatabaseIDs.contains(id) { results[id] = state }
+        if activeCopyIDs.contains(id) { results[id] = state }
         do { try commit(next) }
         catch { failure = .settingsUnavailable; return }
         obsolete.forEach { environment.cancelNotification($0.id) }
@@ -737,7 +823,7 @@ final class DriveVerificationController: ObservableObject {
         bindings = settings.bindings
         preferences = settings.preferences
         results = settings.records.filter { id, record in
-            guard let binding = settings.bindings[id], activeDatabaseIDs.contains(id),
+            guard let binding = settings.bindings[id], activeCopyIDs.contains(id),
                   !disconnectingAccounts.contains(binding.accountID) else { return false }
             guard record.state.status == .confirmed else { return true }
             guard let current = validatedCopies[id] else { return false }
@@ -824,7 +910,8 @@ final class DriveVerificationController: ObservableObject {
         for (id, record) in settings.records {
             guard settings.bindings[id] != nil, record.pending.count <= 16,
                   Set(record.pending.map(\.id)).count == record.pending.count,
-                  record.pending.allSatisfy({ $0.databaseID == id && $0.databaseName.utf8.count <= 4096 }) else {
+                  record.pending.allSatisfy({ $0.copyID == id && $0.databaseName.utf8.count <= 4096 &&
+                      ($0.targetName?.utf8.count ?? 0) <= 4096 }) else {
                 throw DriveControllerFailure.invalidSavedState
             }
         }

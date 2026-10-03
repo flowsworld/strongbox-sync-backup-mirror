@@ -371,3 +371,47 @@
 "The Drive location could not be checked. Retry or choose a folder manually." = "The Drive location could not be checked. Retry or choose a folder manually.";
 
 "Google grants read access to metadata across all Drive files. The selected folder determines verification; the app also searches for identical copies elsewhere in this account." = "Google grants read access to metadata across all Drive files. The selected folder determines verification; the app also searches for identical copies elsewhere in this account.";
+
+"No destinations configured" = "No destinations configured";
+
+"This destination folder is already in the list." = "This destination folder is already in the list.";
+
+"%@ of %@ destinations current" = "%@ of %@ destinations current";
+
+"All %@ destinations current" = "All %@ destinations current";
+
+"Shared destinations" = "Shared destinations";
+
+"Individual destinations" = "Individual destinations";
+
+"Add destination…" = "Add destination…";
+
+"Use shared destinations" = "Use shared destinations";
+
+"Set own destinations…" = "Set own destinations…";
+
+"Remove" = "Remove";
+
+"Destination: %@" = "Destination: %@";
+
+"%@: %@" = "%@: %@";
+
+"Startup, shared destinations and Strongbox access." = "Startup, shared destinations and Strongbox access.";
+
+"Used unless a database has its own destinations." = "Used unless a database has its own destinations.";
+
+"Removing a destination keeps the existing copy in that folder." = "Removing a destination keeps the existing copy in that folder.";
+
+"Shared destinations for your databases." = "Shared destinations for your databases.";
+
+"Set own destinations for %@" = "Set own destinations for %@";
+
+"Use shared destinations for %@" = "Use shared destinations for %@";
+
+"Add destination for %@" = "Add destination for %@";
+
+"Change destination %@" = "Change destination %@";
+
+"Remove destination %@" = "Remove destination %@";
+
+"Check uploads per target" = "Check uploads per target";

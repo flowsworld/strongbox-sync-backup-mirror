@@ -29,14 +29,6 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     }
 }
 
-struct DatabasePreferences: Codable, Sendable {
-    var enabled = false
-    var target: Data?
-    var lastCopied: Date?
-    var lastReconciled: Date?
-    var lastFailure: LocalizedMessage?
-}
-
 struct NotificationPreferences: Codable, Sendable {
     var failures = true
     var copies = false
@@ -53,20 +45,19 @@ struct HistoryEntry: Codable, Identifiable, Sendable {
     var displayName: String { databaseID == nil && name == "App" ? L10n.appName : name }
 }
 
-struct Preferences: Codable, Sendable {
-    var source: Data?
-    var defaultTarget: Data?
-    var databases: [String: DatabasePreferences] = [:]
-    var notifications = NotificationPreferences()
-    var history: [HistoryEntry] = []
-    var globalFailure: LocalizedMessage?
-}
-
 private struct PendingNotification {
     let kind: WritableKeyPath<NotificationPreferences, Bool>
     let title: String
     let body: String
     let databaseID: String?
+    var targetID: UUID? = nil
+}
+
+struct TargetState: Sendable {
+    var checked: Date?
+    var targetName: String?
+    var error: LocalizedMessage?
+    var copied = false
 }
 
 struct DatabaseState: Sendable {
@@ -75,6 +66,7 @@ struct DatabaseState: Sendable {
     var targetName: String?
     var error: LocalizedMessage?
     var copied = false
+    var targetStates: [UUID: TargetState] = [:]
 }
 
 enum SourceReadStatus: Sendable, Equatable {
@@ -107,13 +99,14 @@ private struct ScanResult: Sendable {
 }
 
 enum ConfigurationError: LocalizedError, LocalizedMessageError {
-    case missingTarget, collidingDestination
+    case missingTarget, collidingDestination, duplicateTarget
     var errorDescription: String? { message.rendered() }
 
     var message: LocalizedMessage {
         switch self {
-        case .missingTarget: LocalizedMessage(key: "Choose a shared or individual destination folder.")
+        case .missingTarget: LocalizedMessage(key: "No destinations configured")
         case .collidingDestination: LocalizedMessage(key: "Multiple databases would replace the same destination file. Choose different destination folders.")
+        case .duplicateTarget: LocalizedMessage(key: "This destination folder is already in the list.")
         }
     }
 }
@@ -176,10 +169,31 @@ final class AppModel: ObservableObject {
             let workDB = Database(id: UUID(), filename: "Work.kdbx", displayName: L10n.text("Work"))
             let clubDB = Database(id: UUID(), filename: "Club.kdbx", displayName: L10n.text("Club"))
             databases = [privateDB, workDB, clubDB]
-            preferences.databases[privateDB.id.uuidString] = DatabasePreferences(enabled: true, lastCopied: Date().addingTimeInterval(-240))
-            preferences.databases[workDB.id.uuidString] = DatabasePreferences(enabled: true, target: Data(), lastCopied: Date().addingTimeInterval(-7200))
-            states[privateDB.id] = DatabaseState(checked: Date(), targetName: "/Users/Beispiel/Google Drive/Lesekopien")
-            states[workDB.id] = DatabaseState(checked: Date(), targetName: "/Volumes/NAS/Lesekopien", error: LocalizedMessage(key: "The destination folder is unreachable. Connect the NAS."))
+            let local = CopyTarget(bookmark: Data("demo-local".utf8))
+            let drive = CopyTarget(bookmark: Data("demo-drive".utf8))
+            let nas = CopyTarget(bookmark: Data("demo-nas".utf8))
+            preferences.defaultTargets = [local, drive]
+            folderPaths[local.bookmark] = "/Users/Beispiel/Lesekopien"
+            folderPaths[drive.bookmark] = "/Users/Beispiel/Google Drive/Lesekopien"
+            folderPaths[nas.bookmark] = "/Volumes/NAS/Lesekopien"
+            preferences.databases[privateDB.id.uuidString] = DatabasePreferences(enabled: true, targets: [local, drive, nas], lastCopied: Date().addingTimeInterval(-240))
+            preferences.databases[workDB.id.uuidString] = DatabasePreferences(enabled: true, lastCopied: Date().addingTimeInterval(-240))
+            preferences.databases[clubDB.id.uuidString] = DatabasePreferences(enabled: true, targets: [])
+            let unavailable = LocalizedMessage(key: "The destination folder is unreachable. Connect the NAS.")
+            var privateState = DatabaseState(checked: Date(), error: unavailable)
+            var workState = DatabaseState(checked: Date())
+            for target in [local, drive] {
+                let state = TargetState(checked: Date(), targetName: folderPaths[target.bookmark])
+                privateState.targetStates[target.id] = state
+                workState.targetStates[target.id] = state
+                let progress = TargetProgress(lastCopied: Date().addingTimeInterval(-240), lastReconciled: Date())
+                preferences.databases[privateDB.id.uuidString]?.progress[target.id.uuidString] = progress
+                preferences.databases[workDB.id.uuidString]?.progress[target.id.uuidString] = progress
+            }
+            privateState.targetStates[nas.id] = TargetState(checked: Date(), targetName: folderPaths[nas.bookmark], error: unavailable)
+            states[privateDB.id] = privateState
+            states[workDB.id] = workState
+            states[clubDB.id] = DatabaseState(checked: Date(), error: ConfigurationError.missingTarget.message)
             preferences.history = [HistoryEntry(date: Date(), databaseID: workDB.id, name: L10n.text("Work"), message: LocalizedMessage(key: "Destination unreachable"), isError: true), HistoryEntry(date: Date().addingTimeInterval(-240), databaseID: privateDB.id, name: L10n.text("Personal"), message: LocalizedMessage(key: "New copy created"), isError: false)]
             sourceReadStatus = .available
             notificationStatus = L10n.text("Preview with sample data")
@@ -231,7 +245,7 @@ final class AppModel: ObservableObject {
     var activeCount: Int { databases.filter { preference(for: $0).enabled }.count }
     // A saved bookmark enables retrying; sourceReadStatus describes actual read access.
     var sourceGranted: Bool { (isDemo && !isSetupPreview) || preferences.source != nil }
-    var commonTargetName: String { isDemo && !isSetupPreview ? "/Users/Beispiel/Google Drive/Lesekopien" : label(for: preferences.defaultTarget) }
+    var commonTargetName: String { isDemo && !isSetupPreview ? "/Users/Beispiel/Google Drive/Lesekopien" : label(for: preferences.defaultTargets.first?.bookmark) }
     var sourceFolderPath: String { isDemo && !isSetupPreview ? "/Users/Beispiel/Library/Group Containers/group.strongbox.mac.mcguill" : label(for: preferences.source) }
     var canChooseSource: Bool {
         !isDemo && !isChecking && !isStopping && !loadFailed &&
@@ -239,11 +253,24 @@ final class AppModel: ObservableObject {
     }
     func targetFolderPath(for database: Database) -> String {
         if isDemo { return states[database.id]?.targetName ?? commonTargetName }
-        return label(for: preference(for: database).target ?? preferences.defaultTarget)
+        return label(for: (preference(for: database).targets ?? preferences.defaultTargets).first?.bookmark)
     }
     var failureCount: Int { states.values.filter { $0.error != nil }.count }
     func preference(for database: Database) -> DatabasePreferences {
         preferences.databases[database.id.uuidString] ?? DatabasePreferences()
+    }
+    func targets(for database: Database) -> [CopyTarget] {
+        preference(for: database).targets ?? preferences.defaultTargets
+    }
+    func targetStatus(for database: Database) -> String {
+        let targets = targets(for: database)
+        guard !targets.isEmpty else { return L10n.text("No destinations configured") }
+        let state = states[database.id]
+        let current = targets.filter { state?.targetStates[$0.id]?.checked != nil && state?.targetStates[$0.id]?.error == nil }.count
+        if current == targets.count {
+            return L10n.format("All %@ destinations current", L10n.count(current))
+        }
+        return L10n.format("%@ of %@ destinations current", L10n.count(current), L10n.count(targets.count))
     }
     func label(for bookmark: Data?) -> String {
         guard let bookmark else { return L10n.text("No folder selected") }
@@ -261,8 +288,8 @@ final class AppModel: ObservableObject {
     private func rememberTargetPaths() {
         guard let environment else { return }
         let mounts = folderMounts()
-        let targets = [preferences.defaultTarget] + preferences.databases.values.map(\.target)
-        for bookmark in targets.compactMap({ $0 }) {
+        let targets = preferences.defaultTargets + preferences.databases.values.flatMap { $0.targets ?? [] }
+        for bookmark in targets.map(\.bookmark) {
             // This cache is best effort. The scan reports access failures for enabled targets.
             if let folder = try? environment.resolveFolder(bookmark) {
                 folderPaths[bookmark] = FolderPathDisplay.label(for: folder.url.path, mounts: mounts, previous: folderPaths[bookmark])
@@ -294,32 +321,77 @@ final class AppModel: ObservableObject {
         } catch { problem = LocalizedMessage.from(error).rendered() }
     }
 
-    func chooseTarget(for database: Database? = nil) {
+    func chooseTarget(for database: Database? = nil, replacing targetID: UUID? = nil) {
         guard !isDemo, !isChecking, !isStopping, !loadFailed else { return }
         do {
             guard let bookmark = try FolderPicker.choose(
                 title: L10n.text("Choose destination folder"), message: L10n.text("Choose an existing folder for the read-only copies."), readOnly: false
             ) else { return }
-            if let database {
-                var item = preference(for: database)
-                item.target = bookmark
-                preferences.databases[database.id.uuidString] = item
-            } else { preferences.defaultTarget = bookmark }
-            invalidateCloudCopies()
-            rememberTargetPaths()
-            generation += 1
-            if save() { refresh() }
+            try addTarget(bookmark: bookmark, for: database, replacing: targetID)
         } catch { problem = LocalizedMessage.from(error).rendered() }
+    }
+
+    func addTarget(bookmark: Data, for database: Database? = nil, replacing targetID: UUID? = nil) throws {
+        guard !isDemo, !isChecking, !isStopping, !loadFailed, let environment else { return }
+        var list = database.map { preference(for: $0).targets ?? [] } ?? preferences.defaultTargets
+        let folder = try environment.resolveFolder(bookmark)
+        defer { withExtendedLifetime(folder) {} }
+        if let source = preferences.source {
+            let sourceFolder = try environment.resolveFolder(source)
+            _ = try DestinationPlanner.conflictingDestinationIDs(
+                [CopyDestination(databaseID: database?.id ?? UUID(), directory: folder.url, filename: database?.filename ?? "copy.kdbx")],
+                sourceRoot: sourceFolder.url)
+            withExtendedLifetime(sourceFolder) {}
+        }
+        for existing in list where existing.id != targetID {
+            if existing.bookmark == bookmark { throw ConfigurationError.duplicateTarget }
+            // Offline existing targets remain retryable. Compare physical identity when accessible.
+            if let other = try? environment.resolveFolder(existing.bookmark) {
+                let duplicate = try DestinationPlanner.sameDirectory(folder.url, other.url)
+                withExtendedLifetime(other) {}
+                if duplicate { throw ConfigurationError.duplicateTarget }
+            }
+        }
+        let target = CopyTarget(bookmark: bookmark)
+        if let targetID, let index = list.firstIndex(where: { $0.id == targetID }) { list[index] = target }
+        else { list.append(target) }
+        if let database {
+            var item = preference(for: database)
+            item.targets = list
+            preferences.databases[database.id.uuidString] = item
+        } else { preferences.defaultTargets = list }
+        targetsChanged()
+    }
+
+    func removeTarget(_ targetID: UUID, for database: Database? = nil) {
+        guard !isDemo, !isChecking, !isStopping, !loadFailed else { return }
+        if let database {
+            var item = preference(for: database)
+            item.targets = (item.targets ?? preferences.defaultTargets).filter { $0.id != targetID }
+            preferences.databases[database.id.uuidString] = item
+        } else { preferences.defaultTargets.removeAll { $0.id == targetID } }
+        targetsChanged()
+    }
+
+    private func targetsChanged() {
+        pendingNotifications.removeAll { $0.databaseID != nil }
+        for (id, var item) in preferences.databases {
+            let active = Set((item.targets ?? preferences.defaultTargets).map { $0.id.uuidString })
+            item.progress = item.progress.filter { active.contains($0.key) }
+            preferences.databases[id] = item
+        }
+        invalidateCloudCopies()
+        rememberTargetPaths()
+        generation += 1
+        if save() { refresh() }
     }
 
     func useCommonTarget(for database: Database) {
         guard !isDemo, !isChecking, !isStopping, !loadFailed else { return }
         var item = preference(for: database)
-        item.target = nil
+        item.targets = nil
         preferences.databases[database.id.uuidString] = item
-        invalidateCloudCopies()
-        generation += 1
-        if save() { refresh() }
+        targetsChanged()
     }
 
     func setEnabled(_ enabled: Bool, for database: Database) {
@@ -328,6 +400,7 @@ final class AppModel: ObservableObject {
         item.enabled = enabled
         if !enabled {
             item.lastFailure = nil
+            for id in item.progress.keys { item.progress[id]?.lastFailure = nil }
             pendingNotifications.removeAll { $0.databaseID == database.id.uuidString }
         }
         preferences.databases[database.id.uuidString] = item
@@ -516,27 +589,7 @@ final class AppModel: ObservableObject {
                     if preferences.notifications.recoveries { pendingNotifications.append(PendingNotification(kind: \.recoveries, title: L10n.text("Strongbox: Error resolved"), body: L10n.text("Local backups can be checked again."), databaseID: nil)) }
                 }
                 for database in databases where preference(for: database).enabled {
-                    guard let state = states[database.id] else { continue }
-                    if let failure = state.error {
-                        if preference(for: database).lastFailure != failure {
-                            record(database, message: failure, isError: true)
-                            if preferences.notifications.failures { queueNotification(database, kind: \.failures, title: L10n.format("%@ could not be copied", database.displayName), body: failure.rendered()) }
-                        }
-                        preferences.databases[database.id.uuidString, default: DatabasePreferences()].lastFailure = failure
-                    } else {
-                        preferences.databases[database.id.uuidString, default: DatabasePreferences()].lastReconciled = state.checked
-                        pendingNotifications.removeAll { $0.databaseID == database.id.uuidString && $0.kind == \.failures }
-                        if preference(for: database).lastFailure != nil {
-                            preferences.databases[database.id.uuidString, default: DatabasePreferences()].lastFailure = nil
-                            record(database, message: LocalizedMessage(key: "Error resolved"), isError: false)
-                            if preferences.notifications.recoveries { queueNotification(database, kind: \.recoveries, title: L10n.format("%@: Error resolved", database.displayName), body: L10n.text("The read-only copy can be updated again.")) }
-                        }
-                        if state.copied {
-                            preferences.databases[database.id.uuidString, default: DatabasePreferences()].lastCopied = state.checked
-                            record(database, message: LocalizedMessage(key: "New copy created"), isError: false)
-                            if preferences.notifications.copies { queueNotification(database, kind: \.copies, title: L10n.format("%@ was copied", database.displayName), body: L10n.text("The new read-only copy is in the selected destination folder.")) }
-                        }
-                    }
+                    if let state = states[database.id] { recordTargetEvents(for: database, state: state) }
                 }
                 _ = save()
                 if !isStopping { armMonitor() }
@@ -583,33 +636,39 @@ final class AppModel: ObservableObject {
     func driveLocalInputs() -> [DriveLocalInput] {
         guard !isDemo, !isChecking, let environment else { return [] }
         let resolveFolder = environment.resolveFolder
-        return databases.filter { preference(for: $0).enabled }.map { database in
-            let bookmark = preference(for: database).target ?? preferences.defaultTarget
-            let ready = sourceReadStatus == .available && preferences.globalFailure == nil &&
-                states[database.id]?.error == nil && states[database.id]?.checked != nil
-            let identity = bookmark.map { SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined() } ?? "unconfigured"
-            let drivePath = bookmark.flatMap { try? resolveFolder($0) }.flatMap { GoogleDriveLocalPath(directory: $0.url) }
-            return DriveLocalInput(id: database.id, name: database.displayName, filename: database.filename,
-                                   destinationID: identity, makeSnapshot: {
-                guard ready, let bookmark else { throw UploadVerificationFailure.localFileUnavailable }
-                return try await Task.detached(priority: .utility) {
-                    let folder = try resolveFolder(bookmark)
-                    let snapshot = try UploadFingerprint.snapshot(directory: folder.url, filename: database.filename)
-                    return DriveLocalSnapshot(fingerprint: snapshot.fingerprint, validate: {
-                        try await Task.detached(priority: .utility) {
-                            try snapshot.validate()
-                            withExtendedLifetime(folder) {}
-                        }.value
-                    })
-                }.value
-            }, drivePath: drivePath)
+        return databases.filter { preference(for: $0).enabled }.flatMap { database in
+            targets(for: database).enumerated().map { index, target in
+                let bookmark = target.bookmark
+                let result = states[database.id]?.targetStates[target.id]
+                let ready = sourceReadStatus == .available && preferences.globalFailure == nil &&
+                    result?.error == nil && result?.checked != nil
+                let identity = SHA256.hash(data: bookmark).map { String(format: "%02x", $0) }.joined()
+                let drivePath = (try? resolveFolder(bookmark)).flatMap { GoogleDriveLocalPath(directory: $0.url) }
+                return DriveLocalInput(id: target.copyID(for: database.id), name: database.displayName, filename: database.filename,
+                                       destinationID: identity, makeSnapshot: {
+                    guard ready else { throw UploadVerificationFailure.localFileUnavailable }
+                    return try await Task.detached(priority: .utility) {
+                        let folder = try resolveFolder(bookmark)
+                        let snapshot = try UploadFingerprint.snapshot(directory: folder.url, filename: database.filename)
+                        return DriveLocalSnapshot(fingerprint: snapshot.fingerprint, validate: {
+                            try await Task.detached(priority: .utility) {
+                                try snapshot.validate()
+                                withExtendedLifetime(folder) {}
+                            }.value
+                        })
+                    }.value
+                }, drivePath: drivePath, databaseID: database.id,
+                   legacyDatabaseID: index == 0 ? database.id : nil,
+                   targetName: result?.targetName ?? label(for: bookmark))
+            }
         }
     }
 
     func recordDriveEvent(_ event: DriveVerificationEvent) {
         guard !isDemo, !loadFailed else { return }
+        let message = event.targetName.map { LocalizedMessage(key: "%@: %@", arguments: [$0], causes: [event.message]) } ?? event.message
         preferences.history.insert(HistoryEntry(date: Date(), databaseID: event.databaseID,
-                                               name: event.databaseName, message: event.message,
+                                               name: event.databaseName, message: message,
                                                isError: event.kind == .error || event.kind == .overdue), at: 0)
         _ = save()
     }
@@ -617,8 +676,9 @@ final class AppModel: ObservableObject {
     func deliverDriveEvent(_ event: DriveVerificationEvent) async throws -> DriveNotificationDelivery {
         guard let notifications else { return .permissionDenied }
         do {
+            let body = event.targetName.map { L10n.format("%@: %@", $0, event.message.rendered()) } ?? event.message.rendered()
             try await notifications.sendDrive(id: event.id, title: L10n.format("%@: Google Drive", event.databaseName),
-                                              body: event.message.rendered(), databaseID: event.databaseID.uuidString)
+                                              body: body, databaseID: event.databaseID.uuidString)
             return .delivered
         } catch FolderPermissionError.notificationsDenied { return .permissionDenied }
     }
@@ -656,54 +716,68 @@ final class AppModel: ObservableObject {
             throw SourceScanFailure(message: LocalizedMessage.from(error), sourcePath: sourcePath, readStatus: sourceFailureStatus(error))
         }
         let active = databases.filter { preferences.databases[$0.id.uuidString]?.enabled == true }
-        var targets: [UUID: FolderAccess] = [:]
-        var targetNames: [UUID: String] = [:]
-        defer { withExtendedLifetime(targets) {} }
+        var operations: [UUID: (database: Database, target: CopyTarget, folder: FolderAccess)] = [:]
+        defer { withExtendedLifetime(operations) {} }
         var states: [UUID: DatabaseState] = [:]
         var destinations: [CopyDestination] = []
         var folderPaths: [Data: String] = [:]
         var sourcePermissionDenied = false
         for database in active {
-            do {
-                guard let data = preferences.databases[database.id.uuidString]?.target ?? preferences.defaultTarget else { throw ConfigurationError.missingTarget }
-                let folder = try resolveFolder(data)
-                let path = FolderPathDisplay.label(for: folder.url.path, mounts: mounts, previous: previousPaths[data])
-                folderPaths[data] = path
-                targetNames[database.id] = path
-                let destination = CopyDestination(databaseID: database.id, directory: folder.url, filename: database.filename)
-                _ = try DestinationPlanner.conflictingDatabaseIDs([destination], sourceRoot: source.url)
-                destinations.append(destination)
-                targets[database.id] = folder
-            } catch {
-                if (error as? MirrorError) == .sourcePermissionDenied { sourcePermissionDenied = true }
-                states[database.id] = DatabaseState(checked: Date(), error: LocalizedMessage.from(error))
-            }
-        }
-        let conflicts = try DestinationPlanner.conflictingDatabaseIDs(destinations, sourceRoot: source.url) { destination, error in
-            states[destination.databaseID] = DatabaseState(checked: Date(), targetName: targetNames[destination.databaseID], error: LocalizedMessage.from(error))
-        }
-        for database in active {
-            guard states[database.id] == nil else { continue }
-            if conflicts.contains(database.id) {
-                states[database.id] = DatabaseState(checked: Date(), targetName: targetNames[database.id], error: ConfigurationError.collidingDestination.message)
-                continue
-            }
-            guard let target = targets[database.id] else { continue }
-            var state = DatabaseState(checked: Date(), targetName: targetNames[database.id])
-            do {
-                state.backup = try StrongboxBackups.newest(for: database, groupContainer: source.url)
-            } catch {
-                if sourceFailureStatus(error) == .unavailable { sourcePermissionDenied = true }
-                state.error = LocalizedMessage.from(error)
-            }
-            if let backup = state.backup {
-                do { state.copied = try MirrorEngine.copy(backup: backup, to: target.url, filename: database.filename) == .copied }
+            let selected = preferences.databases[database.id.uuidString]?.targets ?? preferences.defaultTargets
+            var state = DatabaseState(checked: Date())
+            if selected.isEmpty { state.error = ConfigurationError.missingTarget.message }
+            else {
+                do { state.backup = try StrongboxBackups.newest(for: database, groupContainer: source.url) }
                 catch {
-                    if (error as? MirrorError) == .sourcePermissionDenied { sourcePermissionDenied = true }
+                    if sourceFailureStatus(error) == .unavailable { sourcePermissionDenied = true }
                     state.error = LocalizedMessage.from(error)
                 }
             }
+            for target in selected {
+                var result = TargetState(checked: Date(), targetName: previousPaths[target.bookmark], error: state.error)
+                do {
+                    let folder = try resolveFolder(target.bookmark)
+                    let path = FolderPathDisplay.label(for: folder.url.path, mounts: mounts, previous: previousPaths[target.bookmark])
+                    folderPaths[target.bookmark] = path
+                    result.targetName = path
+                    let id = target.copyID(for: database.id)
+                    destinations.append(CopyDestination(id: id, databaseID: database.id, directory: folder.url, filename: database.filename))
+                    operations[id] = (database, target, folder)
+                } catch {
+                    if (error as? MirrorError) == .sourcePermissionDenied { sourcePermissionDenied = true }
+                    result.error = LocalizedMessage.from(error)
+                }
+                state.targetStates[target.id] = result
+            }
             states[database.id] = state
+        }
+        let conflicts = try DestinationPlanner.conflictingDestinationIDs(destinations, sourceRoot: source.url) { destination, error in
+            guard let operation = operations[destination.id] else { return }
+            if (error as? MirrorError) == .sourcePermissionDenied { sourcePermissionDenied = true }
+            states[operation.database.id]?.targetStates[operation.target.id]?.error = LocalizedMessage.from(error)
+        }
+        for database in active {
+            let selected = preferences.databases[database.id.uuidString]?.targets ?? preferences.defaultTargets
+            for target in selected {
+                let id = target.copyID(for: database.id)
+                if conflicts.contains(id) {
+                    states[database.id]?.targetStates[target.id]?.error = ConfigurationError.collidingDestination.message
+                }
+                guard let operation = operations[id], states[database.id]?.targetStates[target.id]?.error == nil,
+                      let backup = states[database.id]?.backup else { continue }
+                do {
+                    states[database.id]?.targetStates[target.id]?.copied = try MirrorEngine.copy(backup: backup, to: operation.folder.url, filename: database.filename) == .copied
+                } catch {
+                    if (error as? MirrorError) == .sourcePermissionDenied { sourcePermissionDenied = true }
+                    states[database.id]?.targetStates[target.id]?.error = LocalizedMessage.from(error)
+                }
+            }
+            if var state = states[database.id] {
+                state.targetName = selected.first.flatMap { state.targetStates[$0.id]?.targetName }
+                state.error = selected.compactMap { state.targetStates[$0.id]?.error }.first ?? state.error
+                state.copied = state.targetStates.values.contains { $0.copied }
+                states[database.id] = state
+            }
         }
         return ScanResult(sourcePath: sourcePath, folderPaths: folderPaths, sourcePermissionDenied: sourcePermissionDenied, databases: databases, states: states)
     }
@@ -734,12 +808,65 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func record(_ database: Database, message: LocalizedMessage, isError: Bool) {
+    private func recordTargetEvents(for database: Database, state: DatabaseState) {
+        var item = preference(for: database)
+        let selected = targets(for: database)
+        if selected.isEmpty, let failure = state.error {
+            if item.lastFailure != failure {
+                record(database, message: failure, isError: true)
+                if preferences.notifications.failures {
+                    queueNotification(database, kind: \.failures, title: L10n.format("%@ could not be copied", database.displayName), body: failure.rendered())
+                }
+            }
+        }
+        for target in selected {
+            guard let result = state.targetStates[target.id] else { continue }
+            var progress = item.progress[target.id.uuidString] ?? TargetProgress()
+            let name = result.targetName ?? label(for: target.bookmark)
+            if let failure = result.error {
+                if progress.lastFailure != failure {
+                    record(database, message: failure, isError: true, targetName: name)
+                    if preferences.notifications.failures {
+                        queueNotification(database, kind: \.failures, title: L10n.format("%@ could not be copied", database.displayName),
+                                          body: L10n.format("%@: %@", name, failure.rendered()), targetID: target.id)
+                    }
+                }
+                progress.lastFailure = failure
+            } else {
+                progress.lastReconciled = result.checked
+                pendingNotifications.removeAll { $0.databaseID == database.id.uuidString && $0.targetID == target.id && $0.kind == \.failures }
+                if progress.lastFailure != nil {
+                    record(database, message: LocalizedMessage(key: "Error resolved"), isError: false, targetName: name)
+                    if preferences.notifications.recoveries {
+                        queueNotification(database, kind: \.recoveries, title: L10n.format("%@: Error resolved", database.displayName),
+                                          body: L10n.format("%@: %@", name, L10n.text("The read-only copy can be updated again.")), targetID: target.id)
+                    }
+                }
+                progress.lastFailure = nil
+                if result.copied {
+                    progress.lastCopied = result.checked
+                    record(database, message: LocalizedMessage(key: "New copy created"), isError: false, targetName: name)
+                    if preferences.notifications.copies {
+                        queueNotification(database, kind: \.copies, title: L10n.format("%@ was copied", database.displayName),
+                                          body: L10n.format("%@: %@", name, L10n.text("The new read-only copy is in the selected destination folder.")), targetID: target.id)
+                    }
+                }
+            }
+            item.progress[target.id.uuidString] = progress
+        }
+        item.lastFailure = state.error
+        if state.error == nil { item.lastReconciled = state.checked }
+        if state.copied { item.lastCopied = state.checked }
+        preferences.databases[database.id.uuidString] = item
+    }
+
+    private func record(_ database: Database, message: LocalizedMessage, isError: Bool, targetName: String? = nil) {
+        let message = targetName.map { LocalizedMessage(key: "%@: %@", arguments: [$0], causes: [message]) } ?? message
         preferences.history.insert(HistoryEntry(date: Date(), databaseID: database.id, name: database.displayName, message: message, isError: isError), at: 0)
         preferences.history = Array(preferences.history.prefix(200))
     }
-    private func queueNotification(_ database: Database, kind: WritableKeyPath<NotificationPreferences, Bool>, title: String, body: String) {
-        pendingNotifications.append(PendingNotification(kind: kind, title: title, body: body, databaseID: database.id.uuidString))
+    private func queueNotification(_ database: Database, kind: WritableKeyPath<NotificationPreferences, Bool>, title: String, body: String, targetID: UUID? = nil) {
+        pendingNotifications.append(PendingNotification(kind: kind, title: title, body: body, databaseID: database.id.uuidString, targetID: targetID))
     }
     private func deliverNotifications() async {
         guard !notificationAttemptRunning, let notifications else {

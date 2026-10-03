@@ -48,7 +48,7 @@ struct DriveResultFreshnessTests {
         let fingerprint = try UploadFingerprint.read(directory: directory, filename: filename)
         let provider = try ReplacingDriveProvider(localFile: localFile, fingerprint: fingerprint)
         let account = provider.account
-        let databaseID = UUID()
+        let databaseID = UUID(), copyID = UUID()
         var delivered: [DriveVerificationEvent] = []
         let environment = DriveVerificationEnvironment(
             listAccounts: { try await provider.accounts() }, connect: { account }, cancelConnect: {},
@@ -57,11 +57,11 @@ struct DriveResultFreshnessTests {
                     Data(#"{"id":"synthetic-folder","name":"Fixture folder","mimeType":"application/vnd.google-apps.folder","trashed":false}"#.utf8),
                     requestedID: folderID)
             }, remoteFile: { _, _, _ in await provider.matchingFile() }, localInputs: {
-                [DriveLocalInput(id: databaseID, name: "Fixture database", filename: filename,
+                [DriveLocalInput(id: copyID, name: "Fixture database", filename: filename,
                                 destinationID: "synthetic-destination", makeSnapshot: {
                     let snapshot = try UploadFingerprint.snapshot(directory: directory, filename: filename)
                     return DriveLocalSnapshot(fingerprint: snapshot.fingerprint, validate: { try snapshot.validate() })
-                })]
+                }, databaseID: databaseID, targetName: "Drive backup")]
             }, deliver: { event in delivered.append(event); return .delivered },
             cancelNotification: { _ in }, history: { _ in }, clock: { 100 })
         let controller = DriveVerificationController(settingsURL: directory.appendingPathComponent("settings.json"),
@@ -70,7 +70,7 @@ struct DriveResultFreshnessTests {
         var preferences = DriveNotificationPreferences()
         preferences.confirmed = true
         try controller.setPreferences(preferences)
-        try await controller.selectFolder(databaseID: databaseID, accountID: account.id, input: "synthetic-folder")
+        try await controller.selectFolder(databaseID: copyID, accountID: account.id, input: "synthetic-folder")
         for _ in 0..<10_000 {
             if await provider.replaced, !controller.isChecking { break }
             await Task.yield()
@@ -78,7 +78,7 @@ struct DriveResultFreshnessTests {
         try #require(await provider.replaced)
         #expect(!controller.isChecking)
         #expect(try Data(contentsOf: localFile) == Data("xyz".utf8))
-        #expect(controller.results[databaseID]?.status == .error(.localFileChanged))
+        #expect(controller.results[copyID]?.status == .error(.localFileChanged))
         #expect(!delivered.contains { $0.kind == .confirmed })
     }
 }

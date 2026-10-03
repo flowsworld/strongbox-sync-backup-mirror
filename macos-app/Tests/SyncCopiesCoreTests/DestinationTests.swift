@@ -45,6 +45,23 @@ struct DestinationTests {
         #expect(try DestinationPlanner.conflictingDatabaseIDs(destinations, sourceRoot: source).isEmpty)
     }
 
+    @Test func conflictsOnlyBlockTheAffectedDestinationOfEachDatabase() throws {
+        defer { try! FileManager.default.removeItem(at: root) }
+        let source = try directory("source")
+        let shared = try directory("shared")
+        let separate = try directory("separate")
+        let firstDatabase = UUID(), secondDatabase = UUID()
+        let firstShared = UUID(), firstSeparate = UUID(), secondShared = UUID()
+        let destinations = [
+            CopyDestination(id: firstShared, databaseID: firstDatabase, directory: shared, filename: "a.kdbx"),
+            CopyDestination(id: firstSeparate, databaseID: firstDatabase, directory: separate, filename: "a.kdbx"),
+            CopyDestination(id: secondShared, databaseID: secondDatabase, directory: shared, filename: "A.kdbx"),
+        ]
+
+        #expect(try DestinationPlanner.conflictingDestinationIDs(destinations, sourceRoot: source) == [firstShared, secondShared])
+        #expect(try DestinationPlanner.conflictingDatabaseIDs(destinations, sourceRoot: source) == [firstDatabase, secondDatabase])
+    }
+
     @Test func detectsCaseAliasesOnCaseInsensitiveVolumes() throws {
         defer { try! FileManager.default.removeItem(at: root) }
         let source = try directory("source")
@@ -55,6 +72,19 @@ struct DestinationTests {
         let destinations = [CopyDestination(databaseID: firstID, directory: target, filename: "a.kdbx"),
                             CopyDestination(databaseID: secondID, directory: alias, filename: "a.kdbx")]
         #expect(try DestinationPlanner.conflictingDatabaseIDs(destinations, sourceRoot: source) == [firstID, secondID])
+    }
+
+    @Test func recognizesTheSamePhysicalDirectoryAcrossAlternativePaths() throws {
+        defer { try! FileManager.default.removeItem(at: root) }
+        let target = try directory("MiXeD-Target")
+        let other = try directory("other")
+        let alternative = URL(fileURLWithPath: root.path + "//MiXeD-Target/", isDirectory: true)
+        #expect(try DestinationPlanner.sameDirectory(target, alternative))
+        #expect(try !DestinationPlanner.sameDirectory(target, other))
+        let caseAlias = root.appendingPathComponent("mixed-target", isDirectory: true)
+        if FileManager.default.fileExists(atPath: caseAlias.path) {
+            #expect(try DestinationPlanner.sameDirectory(target, caseAlias))
+        }
     }
 
     @Test func rejectsTheSourceRootAndItsDescendants() throws {

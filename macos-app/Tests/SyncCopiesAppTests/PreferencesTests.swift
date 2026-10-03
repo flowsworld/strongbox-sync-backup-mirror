@@ -4,6 +4,16 @@ import SyncCopiesCore
 @testable import SyncCopies
 
 struct PreferencesTests {
+    @Test func individualEmptyListSurvivesRestartWithoutInheritingCommonTargets() throws {
+        var settings = Preferences()
+        settings.defaultTargets = [CopyTarget(bookmark: Data([1, 2, 3]))]
+        let databaseID = UUID().uuidString
+        settings.databases[databaseID] = DatabasePreferences(enabled: true, targets: [])
+        let restored = try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(settings))
+        #expect(restored.defaultTargets.first?.bookmark == Data([1, 2, 3]))
+        #expect(restored.databases[databaseID]?.targets?.isEmpty == true)
+    }
+
     @Test func existingPreferencesRetainGrantsAndLocalizeHistory() throws {
         let databaseID = UUID(uuidString: "1EC975AB-097A-4D40-BB78-188794FDD85A")!
         let historyID = UUID(uuidString: "AFB35986-5C59-42D7-8215-0DF0974024EF")!
@@ -18,10 +28,10 @@ struct PreferencesTests {
         """
         let preferences = try JSONDecoder().decode(Preferences.self, from: Data(oldJSON.utf8))
         #expect(preferences.source == Data([1, 2, 3]))
-        #expect(preferences.defaultTarget == Data([4, 5, 6]))
+        #expect(preferences.defaultTargets.first?.bookmark == Data([4, 5, 6]))
         let database = try #require(preferences.databases[databaseID.uuidString])
         #expect(database.enabled)
-        #expect(database.target == Data([7, 8, 9]))
+        #expect(database.targets?.first?.bookmark == Data([7, 8, 9]))
         #expect(database.lastCopied == Date(timeIntervalSinceReferenceDate: 123))
         #expect(database.lastFailure?.rendered(locale: Locale(identifier: "en_US")) == "The latest backup is empty. The existing copy is preserved.")
         #expect(preferences.globalFailure?.rendered(locale: Locale(identifier: "en_US")) == "The saved folder permission is out of date. Please allow access to the folder again.")

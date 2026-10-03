@@ -121,6 +121,10 @@ private final class DriveControllerFixture {
     var localEnabled = true
     var drivePath: GoogleDriveLocalPath?
     var destinationID = "destination-1"
+    var copyID: UUID?
+    var databaseID: UUID?
+    var legacyDatabaseID: UUID?
+    var targetName: String?
     var discoveryFailure: GoogleDriveMetadataError?
     var otherCopyCount = 0
     var otherCopyFailure = false
@@ -153,14 +157,14 @@ private final class DriveControllerFixture {
                 let local = fingerprint, localProblem = localFailure, validationProblem = validationFailure
                 let fileProblem = validationFileFailure
                 let gate = snapshotGate
-                return [DriveLocalInput(id: id, name: "Fixture database", filename: "fixture.kdbx", destinationID: destinationID, makeSnapshot: {
+                return [DriveLocalInput(id: copyID ?? id, name: "Fixture database", filename: "fixture.kdbx", destinationID: destinationID, makeSnapshot: {
                     if let gate { await gate.wait() }
                     if let localProblem { throw localProblem }
                     return DriveLocalSnapshot(fingerprint: local, validate: {
                         if let validationProblem { throw validationProblem }
                         if let fileProblem { throw fileProblem }
                     })
-                }, drivePath: drivePath)] + (extraLocalInput.map { [$0] } ?? [])
+                }, drivePath: drivePath, databaseID: databaseID, legacyDatabaseID: legacyDatabaseID, targetName: targetName)] + (extraLocalInput.map { [$0] } ?? [])
             }, deliver: { [self] event in
                 if deliveryFails { throw UploadVerificationFailure.providerUnavailable }
                 delivered.append(event)
@@ -213,6 +217,122 @@ private final class DriveControllerFixture {
 
 @MainActor
 struct DriveVerificationControllerTests {
+    @Test func legacyVerificationMovesToOneTargetAndKeepsDatabaseIdentity() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        await fixture.server.set(remote: try fixture.matching())
+        let original = fixture.controller()
+        var preferences = DriveNotificationPreferences()
+        preferences.confirmed = true
+        try original.setPreferences(preferences)
+        fixture.deliveryFails = true
+        try await fixture.bind(original)
+        #expect(fixture.history.count == 1)
+        #expect(await original.quiesceAndPersist())
+
+        let firstCopyID = UUID(), secondCopyID = UUID()
+        fixture.copyID = firstCopyID
+        fixture.databaseID = fixture.id
+        fixture.legacyDatabaseID = fixture.id
+        fixture.targetName = "Drive backup"
+        let fingerprint = fixture.fingerprint
+        fixture.extraLocalInput = DriveLocalInput(id: secondCopyID, name: "Fixture database",
+            filename: "fixture.kdbx", destinationID: "destination-2", makeSnapshot: {
+                DriveLocalSnapshot(fingerprint: fingerprint, validate: {})
+            }, databaseID: fixture.id, targetName: "Other backup")
+        fixture.deliveryFails = false
+        let migrated = fixture.controller()
+        await migrated.start()
+        migrated.requestCheck()
+        try await fixture.settle(migrated)
+        #expect(migrated.bindings[firstCopyID]?.folderID == "resolved-root")
+        #expect(migrated.bindings[fixture.id] == nil)
+        #expect(migrated.bindings[secondCopyID] == nil)
+        #expect(migrated.results[firstCopyID]?.status == .confirmed)
+        #expect(fixture.delivered.count == 1)
+        #expect(fixture.delivered.first?.databaseID == fixture.id)
+        #expect(fixture.delivered.first?.copyID == firstCopyID)
+        #expect(fixture.delivered.first?.targetName == "Drive backup")
+        #expect(await migrated.quiesceAndPersist())
+        let reloaded = fixture.controller()
+        #expect(reloaded.bindings[firstCopyID]?.folderID == "resolved-root")
+    }
+
+    @Test func targetFailuresAndOptOutsDoNotAffectOtherCopiesOfTheSameDatabase() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        let offlineCopyID = UUID(), cloudCopyID = UUID()
+        fixture.copyID = offlineCopyID
+        fixture.databaseID = fixture.id
+        fixture.targetName = "Offline backup"
+        fixture.localFailure = .localFileUnavailable
+        let fingerprint = fixture.fingerprint
+        fixture.extraLocalInput = DriveLocalInput(id: cloudCopyID, name: "Fixture database",
+            filename: "fixture.kdbx", destinationID: "cloud-destination", makeSnapshot: {
+                DriveLocalSnapshot(fingerprint: fingerprint, validate: {})
+            }, databaseID: fixture.id, targetName: "Drive backup")
+        await fixture.server.set(remote: try fixture.matching())
+        let controller = fixture.controller()
+        await controller.start()
+        let account = await fixture.server.account
+        try await controller.selectFolder(databaseID: offlineCopyID, accountID: account.id, input: "offline-folder")
+        try await fixture.settle(controller)
+        try await controller.selectFolder(databaseID: cloudCopyID, accountID: account.id, input: "cloud-folder")
+        try await fixture.settle(controller)
+        #expect(controller.results[offlineCopyID]?.status == .error(.localFileUnavailable))
+        #expect(controller.results[cloudCopyID]?.status == .confirmed)
+        #expect(fixture.delivered.count == 1)
+        #expect(fixture.delivered.first?.databaseID == fixture.id)
+        #expect(fixture.delivered.first?.copyID == offlineCopyID)
+        #expect(fixture.delivered.first?.targetName == "Offline backup")
+
+        try controller.disable(databaseID: offlineCopyID)
+        controller.requestCheck()
+        try await fixture.settle(controller)
+        #expect(controller.results[cloudCopyID]?.status == .confirmed)
+        #expect(controller.bindings[cloudCopyID]?.folderID == "cloud-folder")
+        #expect(controller.automaticCheckingDisabled == [offlineCopyID])
+    }
+
+    @Test func legacyAutomaticOptOutMovesOnlyToTheOriginalTarget() async throws {
+        let fixture = try DriveControllerFixture()
+        defer { fixture.remove() }
+        let original = fixture.controller()
+        try original.disable(databaseID: fixture.id)
+        #expect(await original.quiesceAndPersist())
+        let originalCopyID = UUID(), addedCopyID = UUID()
+        fixture.copyID = originalCopyID
+        fixture.databaseID = fixture.id
+        fixture.legacyDatabaseID = fixture.id
+        fixture.drivePath = GoogleDriveLocalPath(directory: URL(fileURLWithPath:
+            "/Users/test/Library/CloudStorage/GoogleDrive-fixture@example.invalid/My Drive/Backups"))
+        let fingerprint = fixture.fingerprint
+        fixture.extraLocalInput = DriveLocalInput(id: addedCopyID, name: "Fixture database",
+            filename: "fixture.kdbx", destinationID: "added-cloud-destination", makeSnapshot: {
+                DriveLocalSnapshot(fingerprint: fingerprint, validate: {})
+            }, drivePath: fixture.drivePath, databaseID: fixture.id)
+        await fixture.server.set(remote: try fixture.matching())
+        let migrated = fixture.controller()
+        await migrated.start()
+        migrated.requestCheck()
+        try await fixture.settle(migrated)
+        #expect(migrated.automaticCheckingDisabled == [originalCopyID])
+        #expect(migrated.bindings[originalCopyID] == nil)
+        #expect(migrated.results[addedCopyID]?.status == .confirmed)
+    }
+
+    @Test func persistedLegacyEventsDecodeWithTheirDatabaseAsCopyIdentity() throws {
+        let eventID = UUID(), databaseID = UUID()
+        let data = Data("""
+            {"id":"\(eventID.uuidString)","databaseID":"\(databaseID.uuidString)",
+             "databaseName":"Fixture database","kind":"confirmed","confirmed":true}
+            """.utf8)
+        let event = try JSONDecoder().decode(DriveVerificationEvent.self, from: data)
+        #expect(event.copyID == databaseID)
+        #expect(event.targetName == nil)
+        #expect(event.id == eventID)
+    }
+
     @Test func automaticallyUsesMatchingAccountAndLocalDrivePathWithoutFolderSelection() async throws {
         let fixture = try DriveControllerFixture()
         defer { fixture.remove() }

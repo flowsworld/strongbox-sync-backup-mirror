@@ -49,6 +49,31 @@ private final class NotificationGate {
 
 @MainActor
 struct NotificationTests {
+    @Test func matchingFailuresAtTwoTargetsNotifyIndependentlyAndStayQuietAfterRestart() async throws {
+        let fixture = try ModelFixture()
+        var settings = try JSONDecoder().decode(Preferences.self, from: Data(contentsOf: fixture.preferencesURL))
+        settings.databases[fixture.first.id.uuidString]?.targets = [
+            CopyTarget(bookmark: Data("common".utf8)), CopyTarget(bookmark: Data("override".utf8))
+        ]
+        settings.databases[fixture.second.id.uuidString]?.enabled = false
+        try JSONEncoder().encode(settings).write(to: fixture.preferencesURL)
+        let recorder = NotificationRecorder()
+        let model = AppModel(environment: fixture.environment(notifications: recorder.service()))
+        try await eventually { !model.isChecking }
+        try FileManager.default.moveItem(at: fixture.common, to: fixture.root.appendingPathComponent("offline-common"))
+        try FileManager.default.moveItem(at: fixture.override, to: fixture.root.appendingPathComponent("offline-override"))
+        model.refresh()
+        try await eventually { !model.isChecking }
+        #expect(recorder.requests.count == 2)
+        #expect(Set(recorder.requests.map { $0.content.body }).count == 2)
+        recorder.requests.removeAll()
+        await model.shutdown()
+        let restarted = AppModel(environment: fixture.environment(notifications: recorder.service()))
+        try await eventually { !restarted.isChecking }
+        #expect(recorder.requests.isEmpty)
+        await restarted.shutdown()
+    }
+
     @Test(arguments: [false, true]) func cancelledCloudAlertCannotRemainPending(duringAdd: Bool) async throws {
         let recorder = NotificationRecorder()
         let service = recorder.service()
@@ -143,7 +168,7 @@ struct NotificationTests {
         restarted.refresh()
         try await eventually { !restarted.isChecking }
         #expect(recorder.requests.count == (settings.notifications.recoveries ? 1 : 0))
-        #expect(restarted.preferences.history.contains { $0.message.key == "Error resolved" })
+        #expect(restarted.preferences.history.contains { $0.message.causes.contains { $0.key == "Error resolved" } })
         recorder.requests.removeAll()
         try FileManager.default.moveItem(at: fixture.common, to: offline)
         restarted.refresh()
@@ -184,7 +209,7 @@ struct NotificationTests {
         try await eventually { !restarted.isChecking }
         #expect(recorder.requests.count == 3)
         var changed = restarted.preferences
-        changed.databases[fixture.first.id.uuidString]?.target = Data("invalid-grant".utf8)
+        changed.databases[fixture.first.id.uuidString]?.targets = [CopyTarget(bookmark: Data("invalid-grant".utf8))]
         await restarted.shutdown()
         try JSONEncoder().encode(changed).write(to: fixture.preferencesURL)
         let changedFailure = AppModel(environment: fixture.environment(notifications: recorder.service()))
@@ -204,7 +229,7 @@ struct NotificationTests {
         let model = AppModel(environment: fixture.environment(notifications: recorder.service()))
         try await eventually { !model.isChecking }
         #expect(recorder.requests.isEmpty)
-        #expect(model.preferences.history.filter { $0.message.key == "New copy created" }.count == 2)
+        #expect(model.preferences.history.filter { $0.message.causes.contains { $0.key == "New copy created" } }.count == 2)
         #expect(recorder.authorizationRequests == 0)
         recorder.authorization = .authorized
         await model.updateNotificationStatus()

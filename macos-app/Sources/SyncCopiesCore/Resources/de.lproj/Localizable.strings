@@ -371,3 +371,47 @@
 "The Drive location could not be checked. Retry or choose a folder manually." = "Der Drive-Speicherort konnte nicht geprüft werden. Versuche es erneut oder wähle den Ordner manuell.";
 
 "Google grants read access to metadata across all Drive files. The selected folder determines verification; the app also searches for identical copies elsewhere in this account." = "Google erlaubt Zugriff auf Metadaten aller Drive-Dateien. Der gewählte Ordner bestimmt die Prüfung; zusätzlich sucht die App nach identischen Kopien in anderen Ordnern dieses Kontos.";
+
+"No destinations configured" = "Keine Ziele eingerichtet";
+
+"This destination folder is already in the list." = "Dieser Zielordner ist bereits in der Liste.";
+
+"%@ of %@ destinations current" = "%@ von %@ Zielen aktuell";
+
+"All %@ destinations current" = "Alle %@ Ziele aktuell";
+
+"Shared destinations" = "Gemeinsame Ziele";
+
+"Individual destinations" = "Eigene Ziele";
+
+"Add destination…" = "Ziel hinzufügen…";
+
+"Use shared destinations" = "Gemeinsame Ziele verwenden";
+
+"Set own destinations…" = "Eigene Ziele festlegen…";
+
+"Remove" = "Entfernen";
+
+"Destination: %@" = "Ziel: %@";
+
+"%@: %@" = "%@: %@";
+
+"Startup, shared destinations and Strongbox access." = "Autostart, gemeinsame Ziele und Strongbox-Zugriff.";
+
+"Used unless a database has its own destinations." = "Werden verwendet, wenn eine Datenbank keine eigenen Ziele hat.";
+
+"Removing a destination keeps the existing copy in that folder." = "Beim Entfernen eines Ziels bleibt die vorhandene Kopie in diesem Ordner erhalten.";
+
+"Shared destinations for your databases." = "Gemeinsame Ziele für deine Datenbanken.";
+
+"Set own destinations for %@" = "Eigene Ziele für %@ festlegen";
+
+"Use shared destinations for %@" = "Gemeinsame Ziele für %@ verwenden";
+
+"Add destination for %@" = "Ziel für %@ hinzufügen";
+
+"Change destination %@" = "Ziel %@ ändern";
+
+"Remove destination %@" = "Ziel %@ entfernen";
+
+"Check uploads per target" = "Uploads je Ziel prüfen";

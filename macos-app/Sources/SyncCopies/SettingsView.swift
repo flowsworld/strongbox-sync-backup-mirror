@@ -56,7 +56,7 @@ struct SettingsView: View {
 
     private var general: some View {
         VStack(alignment: .leading, spacing: 22) {
-            heading(L10n.text("General"), L10n.text("Startup, shared destination and Strongbox access."))
+            heading(L10n.text("General"), L10n.text("Startup, shared destinations and Strongbox access."))
             if model.needsSetup {
                 SetupChecklist(model: model)
             }
@@ -68,10 +68,23 @@ struct SettingsView: View {
                     Text(L10n.text("Allow the login item in macOS System Settings.")).foregroundStyle(.secondary)
                 }
             }
-            GroupBox(L10n.text("Shared destination folder")) {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(alignment: .top) { folderPath(model.commonTargetName); Spacer(); Button(L10n.text("Change…")) { model.chooseTarget() }.disabled(model.isDemo || model.isChecking) }
-                    Text(L10n.text("Used unless a database has its own destination.")).font(.callout).foregroundStyle(.secondary)
+            GroupBox(L10n.text("Shared destinations")) {
+                VStack(alignment: .leading, spacing: 12) {
+                    if model.preferences.defaultTargets.isEmpty {
+                        Text(L10n.text("No destinations configured")).foregroundStyle(.secondary)
+                    }
+                    ForEach(model.preferences.defaultTargets) { target in
+                        HStack(alignment: .top, spacing: 12) {
+                            folderPath(model.label(for: target.bookmark))
+                            targetActions(target)
+                        }
+                    }
+                    Button(L10n.text("Add destination…")) { model.chooseTarget() }
+                        .disabled(cannotChangeTargets)
+                    Text(L10n.text("Used unless a database has its own destinations."))
+                        .font(.callout).foregroundStyle(.secondary)
+                    Text(L10n.text("Removing a destination keeps the existing copy in that folder."))
+                        .font(.callout).foregroundStyle(.secondary)
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
             GroupBox(L10n.text("Strongbox access")) { sourceAccess }
@@ -107,34 +120,54 @@ struct SettingsView: View {
         }
     }
 
+    private var cannotChangeTargets: Bool { model.isDemo || model.isChecking || model.isStopping }
+
     private func databaseRow(_ database: Database) -> some View {
         let preferences = model.preference(for: database)
         let state = model.states[database.id]
-        return VStack(alignment: .leading, spacing: 10) {
+        let targets = model.targets(for: database)
+        return VStack(alignment: .leading, spacing: 12) {
             Divider()
             HStack {
                 Toggle(database.displayName, isOn: Binding(get: { model.preference(for: database).enabled }, set: { model.setEnabled($0, for: database) }))
-                    .toggleStyle(.checkbox).fontWeight(.medium).disabled(model.isDemo || model.isChecking)
+                    .toggleStyle(.checkbox).fontWeight(.medium).disabled(cannotChangeTargets)
                 Spacer()
                 if !preferences.enabled { Text(L10n.text("Not selected")).foregroundStyle(.secondary) }
-                else if state?.error != nil { Label(L10n.text("Check failed"), systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
-                else if state?.checked != nil { Label(L10n.text("Copied locally"), systemImage: "checkmark.circle").foregroundStyle(.green) }
-                else { Text(L10n.text("Not checked yet")).foregroundStyle(.secondary) }
-            }
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(preferences.target == nil ? L10n.text("Shared destination folder") : L10n.text("Individual destination folder"))
-                        .foregroundStyle(.secondary)
-                    folderPath(model.targetFolderPath(for: database))
-                }.font(.callout)
-                Spacer()
-                if preferences.target != nil {
-                    Button(L10n.text("Shared destination")) { model.useCommonTarget(for: database) }.disabled(model.isDemo || model.isChecking)
+                else {
+                    Label(model.targetStatus(for: database), systemImage: state?.error != nil || targets.isEmpty ? "exclamationmark.triangle" : state?.checked != nil ? "checkmark.circle" : "clock")
+                        .foregroundStyle(state?.error != nil || targets.isEmpty ? Color.orange : state?.checked != nil ? Color.green : Color.secondary)
                 }
-                Button(preferences.target == nil ? L10n.text("Own destination…") : L10n.text("Change destination…")) { model.chooseTarget(for: database) }
-                    .disabled(model.isDemo || model.isChecking)
             }
-            if let error = state?.error { Text(error.rendered()).font(.callout).foregroundStyle(.orange).textSelection(.enabled) }
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top) {
+                    Text(L10n.text(preferences.targets == nil ? "Shared destinations" : "Individual destinations"))
+                        .font(.callout).foregroundStyle(.secondary)
+                    Spacer()
+                    if preferences.targets == nil {
+                        Button(L10n.text("Set own destinations…")) { model.chooseTarget(for: database) }
+                            .disabled(cannotChangeTargets)
+                            .accessibilityLabel(L10n.format("Set own destinations for %@", database.displayName))
+                    } else {
+                        Button(L10n.text("Use shared destinations")) { model.useCommonTarget(for: database) }
+                            .disabled(cannotChangeTargets)
+                            .accessibilityLabel(L10n.format("Use shared destinations for %@", database.displayName))
+                    }
+                }
+                if targets.isEmpty {
+                    Text(L10n.text("No destinations configured")).font(.callout).foregroundStyle(.orange)
+                }
+                ForEach(targets) { target in
+                    destinationRow(target, for: database, editable: preferences.targets != nil)
+                }
+                if preferences.targets != nil {
+                    Button(L10n.text("Add destination…")) { model.chooseTarget(for: database) }
+                        .disabled(cannotChangeTargets)
+                        .accessibilityLabel(L10n.format("Add destination for %@", database.displayName))
+                }
+            }
+            if let error = state?.error, state?.targetStates.isEmpty != false, !targets.isEmpty {
+                Text(error.rendered()).font(.callout).foregroundStyle(.orange).textSelection(.enabled)
+            }
             Button {
                 if model.expandedDatabases.contains(database.id) { model.expandedDatabases.remove(database.id) }
                 else { model.expandedDatabases.insert(database.id) }
@@ -156,14 +189,53 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     detail(L10n.text("Filename"), database.filename)
                     if let date = state?.backup?.creationDate { detail(L10n.text("Latest local backup"), L10n.date(date)) }
-                    if let date = preferences.lastCopied { detail(L10n.text("Last successful copy"), L10n.date(date)) }
-                    if let date = state?.checked { detail(L10n.text("Last check"), L10n.date(date)) }
                     if let size = state?.backup?.size { detail(L10n.text("File size"), L10n.size(size)) }
-                    if drive.bindings[database.id] != nil { DriveStatusView(state: drive.results[database.id]) }
-                    else { detail(L10n.text("Cloud check"), L10n.text("Cloud checking is off.")) }
                 }.padding(.top, 10).font(.callout)
             }
         }
+    }
+
+    private func destinationRow(_ target: CopyTarget, for database: Database, editable: Bool) -> some View {
+        let state = model.states[database.id]?.targetStates[target.id]
+        let copyID = target.copyID(for: database.id)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 12) {
+                folderPath(state?.targetName ?? model.label(for: target.bookmark))
+                if editable { targetActions(target, for: database) }
+            }
+            if let error = state?.error {
+                Label(L10n.text("Check failed"), systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+                Text(error.rendered()).foregroundStyle(.orange).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if state?.checked != nil {
+                Label(L10n.text("Copied locally"), systemImage: "checkmark.circle").foregroundStyle(.green)
+            } else {
+                Text(L10n.text("Not checked yet")).foregroundStyle(.secondary)
+            }
+            if drive.bindings[copyID] != nil { DriveStatusView(state: drive.results[copyID]) }
+            else { Label(L10n.text("Cloud checking is off."), systemImage: "icloud").foregroundStyle(.secondary) }
+            if model.expandedDatabases.contains(database.id) {
+                if let date = model.preference(for: database).progress[target.id.uuidString]?.lastCopied {
+                    detail(L10n.text("Last successful copy"), L10n.date(date))
+                }
+                if let date = state?.checked { detail(L10n.text("Last check"), L10n.date(date)) }
+            }
+        }
+        .font(.callout)
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func targetActions(_ target: CopyTarget, for database: Database? = nil) -> some View {
+        let path = model.label(for: target.bookmark)
+        return HStack(spacing: 8) {
+            Button(L10n.text("Change…")) { model.chooseTarget(for: database, replacing: target.id) }
+                .accessibilityLabel(L10n.format("Change destination %@", path))
+            Button(L10n.text("Remove")) { model.removeTarget(target.id, for: database) }
+                .accessibilityLabel(L10n.format("Remove destination %@", path))
+                .help(L10n.text("Removing a destination keeps the existing copy in that folder."))
+        }.disabled(cannotChangeTargets)
     }
 
     private func folderPath(_ path: String) -> some View {
